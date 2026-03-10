@@ -1,0 +1,16 @@
+{
+  "slug": "idms-v2-toolkit",
+  "display_name": "IDMS V2 Toolkit",
+  "description": "Intelligent Document Management System (IDMS) V2 Toolkit. This toolkit provides functionality for checking the specific design for processing invoice documents and extracting structured information using OCR and AI.",
+  "version": "0.1.0",
+  "entrypoint": {
+    "type": "python",
+    "command": "python main.py"
+  },
+  "capabilities": [
+   
+  ],
+  "author": "HachiAI",
+  "homepage": "https://github.com/hachiai-com/idms-v2-toolkit",
+  "tags": ["idms", "invoice"]
+}
