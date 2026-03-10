@@ -1,7 +1,7 @@
 {
-  "slug": "idms-v2-toolkit",
-  "display_name": "IDMS V2 Toolkit",
-  "description": "Intelligent Document Management System (IDMS) V2 Toolkit. This toolkit provides functionality for checking the specific design for processing invoice documents and extracting structured information using OCR and AI.",
+  "slug": "llm-parser",
+  "display_name": "LLM Parser",
+  "description": "LLM Parser. It checks the template from the database and extracts information from PDF/JPG/JPEG/PNG Format File with respect to the template",
   "version": "0.1.0",
   "entrypoint": {
     "type": "python",
@@ -11,6 +11,6 @@
    
   ],
   "author": "HachiAI",
-  "homepage": "https://github.com/hachiai-com/idms-v2-toolkit",
-  "tags": ["idms", "invoice"]
+  "homepage": "https://github.com/hachiai-com/llm-parser",
+  "tags": ["idms", "invoice", "llm parser"]
 }
