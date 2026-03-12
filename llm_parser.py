@@ -38,9 +38,8 @@ from models.task_response import TaskResponse
 from models.db_column_mapping_bean import DBColumnMappingBean
 from models.config_file_bean import ConfigFileBean
 from constants import MSSQL_DB, MYSQL_DB
-# ---------------------------------------------------------------------------
+
 # Static logger
-# ---------------------------------------------------------------------------
 static_logger = get_static_logger("LLMParser")
 
 
@@ -48,9 +47,7 @@ static_logger = get_static_logger("LLMParser")
 # ConfigFileBean  (mirrors com.uxplore.utils.common.bean.ConfigFileBean)
 
 
-# ===========================================================================
 # LLMParser
-# ===========================================================================
 class LLMParser:
     """
     Python equivalent of LLMParser.java

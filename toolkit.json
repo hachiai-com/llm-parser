@@ -1,16 +1,51 @@
 {
   "slug": "llm-parser",
   "display_name": "LLM Parser",
-  "description": "LLM Parser. It checks the template from the database and extracts information from PDF/JPG/JPEG/PNG Format File with respect to the template",
+  "description": "A comprehensive toolkit for parsing PDF, PNG, JPG, and JPEG documents using LLMs. It identifies document templates dynamically and extracts information based on database configurations.",
   "version": "0.1.0",
   "entrypoint": {
     "type": "python",
     "command": "python main.py"
   },
   "capabilities": [
-   
+    {
+      "name": "dynamic_template_llm_parser",
+      "description": "Dynamically identifies the appropriate parser template from the database based on document content, then extracts information from the specified file or directory according to the matched template.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "config": {
+            "type": "string",
+            "description": "Config JSON file path or numeric parser ID"
+          },
+          "source": {
+            "type": "string",
+            "description": "Full path to the source file or directory for parsing"
+          }
+        },
+        "required": ["config", "source"]
+      }
+    },
+    {
+      "name": "llm_parser",
+      "description": "Parses the specified file or directory using a specific pre-defined LLM template parser configuration.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "config": {
+            "type": "string",
+            "description": "Config JSON file path or numeric parser ID"
+          },
+          "source": {
+            "type": "string",
+            "description": "Full path to the source file or directory for parsing"
+          }
+        },
+        "required": ["config", "source"]
+      }
+    }
   ],
   "author": "HachiAI",
   "homepage": "https://github.com/hachiai-com/llm-parser",
-  "tags": ["idms", "invoice", "llm parser"]
+  "tags": ["idms", "invoice", "llm parser", "pdf", "data-extraction"]
 }
