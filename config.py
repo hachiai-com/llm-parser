@@ -90,8 +90,8 @@ def cfg_float(key: str, default: float = 0.0) -> float:
 class DBConfig:
     """Mirrors the database.* properties used in SqlDao constructor calls."""
     type = lambda: cfg("DATABASE_TYPE", "mysql")
-    host = lambda: cfg("DATABASE_HoST", "localhost")
-    port = lambda: cfg("DATABASE_PORT", 3306)
+    host = lambda: cfg("DATABASE_HOST", "localhost")
+    port = lambda: cfg_int("DATABASE_PORT", 3306)
     username = lambda: cfg("DATABASE_USERNAME", "")
     password = lambda: cfg("DATABASE_PASSWORD", "")
     database_name = lambda: cfg("DATABASE_NAME", "")

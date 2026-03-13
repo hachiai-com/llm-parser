@@ -43,11 +43,6 @@ from constants import MSSQL_DB, MYSQL_DB
 static_logger = get_static_logger("LLMParser")
 
 
-# DBColumnMappingBean  (mirrors com.uxplore.utils.llm.bean.DBColumnMappingBean)
-# ConfigFileBean  (mirrors com.uxplore.utils.common.bean.ConfigFileBean)
-
-
-# LLMParser
 class LLMParser:
     """
     Python equivalent of LLMParser.java
@@ -55,12 +50,16 @@ class LLMParser:
     Usage (standalone):
         parser = LLMParser(config_path, source_input)
         result = parser.process_file(config_path, source_input)
+        # process_file now returns a dict (_result_summary) instead of an int.
+        # The exit code is available at result["result_code"].
 
     Usage (called from DynamicTemplateLLMParser):
         instance = LLMParser(parser_id, file_path)
         instance.set_logger(logger)
         instance.set_execution_data(execution_data)
         result = instance.process_file(parser_id, file_path)
+        # DynamicTemplateLLMParser reads instance.error_message and
+        # instance.qna_trace_id as before — nothing changed there.
     """
 
     def __init__(self, config_path: str, source_input: str) -> None:
@@ -70,12 +69,12 @@ class LLMParser:
         self.parser_name:  str = ""
         self.service_type: str = "vision_quest;minicmp2_6"
 
-        self.config:           Optional[LLMConfigBean] = None
-        self.dao:              Optional[SqlDao]         = None
-        self.column_format_list: List[DBColumnMappingBean] = []
-        self.column_list:      str = ""
-        self.file_bean:        Optional[ConfigFileBean] = None
-        self.execution_data:   Optional[ExecutionData]  = None
+        self.config:             Optional[LLMConfigBean]      = None
+        self.dao:                Optional[SqlDao]             = None
+        self.column_format_list: List[DBColumnMappingBean]   = []
+        self.column_list:        str                         = ""
+        self.file_bean:          Optional[ConfigFileBean]    = None
+        self.execution_data:     Optional[ExecutionData]     = None
 
         self.qna_trace_id:  str = ""
         self.error_message: str = ""
@@ -86,7 +85,77 @@ class LLMParser:
 
         self.query_table_column_map: List[Dict[str, str]] = []
 
-    # ── Setters called by DynamicTemplateLLMParser ──────────────────────────
+        # ── REPORTING ONLY ────────────────────────────────────────────────────
+        # Populated during execution solely so callers get a rich result dict.
+        # Never read back for any parsing / DB / control-flow logic.
+        self._result_summary: dict = {
+            # set in process_file
+            "parser_execution_id":  self._own_execution_id,
+            "config_id":            config_path,
+            "source":               source_input,
+            "result_code":          None,   # 0=success 1=failed 2=waiting
+            "status":               None,   # "success" | "failed" | "waiting"
+            "message":              None,   # human-readable outcome
+            # set after config load
+            "parser_name":          None,
+            # set after API call
+            "qna_trace_id":         None,
+            # set after polling
+            "total_pages":          None,
+            "pages_processed":      None,
+            # set after DB insert
+            "records_processed":    None,
+            "duration_ms":          None,
+            # set on error
+            "error":                None,
+            # timing
+            "started_at":           datetime.utcnow().isoformat() + "Z",
+            "finished_at":          None,
+        }
+        self._result_summary_start_ms: float = time.time() * 1000  # REPORTING ONLY
+
+    # ── REPORTING ONLY helpers ────────────────────────────────────────────────
+    def _finalize_result_summary(self, result_code: int,
+                                  records: Optional[List] = None,
+                                  task_response: Optional[TaskResponse] = None) -> None:
+        """
+        REPORTING ONLY — stamps all outcome fields into _result_summary.
+        Called once at the end of _process_input_file (success or failure).
+        Never used for any logic.
+        """
+        now_ms = time.time() * 1000
+        status_map = {0: "success", 1: "failed", 2: "waiting"}
+
+        self._result_summary["result_code"]      = result_code
+        self._result_summary["status"]           = status_map.get(result_code, "unknown")
+        self._result_summary["qna_trace_id"]     = self.qna_trace_id or None
+        self._result_summary["error"]            = self.error_message or None
+        self._result_summary["finished_at"]      = datetime.utcnow().isoformat() + "Z"
+        self._result_summary["duration_ms"]      = round(now_ms - self._result_summary_start_ms)
+        self._result_summary["records_processed"] = len(records) if records is not None else None
+
+        if task_response is not None:
+            self._result_summary["total_pages"]     = task_response.total_pages or None
+            self._result_summary["pages_processed"] = task_response.pages_processed or None
+
+        if result_code == 0:
+            rec_count = len(records) if records is not None else 0
+            self._result_summary["message"] = (
+                f"Successfully extracted and inserted {rec_count} record(s) "
+                f"in {self._result_summary['duration_ms']}ms."
+            )
+        elif result_code == 2:
+            self._result_summary["message"] = (
+                "Task is still processing (waiting). "
+                f"QnA trace_id: {self.qna_trace_id}"
+            )
+        else:
+            self._result_summary["message"] = (
+                self.error_message
+                or f"Parser failed (exit code {result_code})."
+            )
+
+    # ── Setters called by DynamicTemplateLLMParser ───────────────────────────
     def set_logger(self, logger) -> None:
         """Share the parent parser's logger instead of creating a new one."""
         self.logger = logger
@@ -96,21 +165,29 @@ class LLMParser:
 
     # ── Public entry point ───────────────────────────────────────────────────
     def run(self) -> None:
-        """Mirrors Runnable.run()"""
+        """Mirrors Runnable.run() — used by the CLI thread pool."""
         try:
             self.process_file(self.config_path, self.source_input)
         except Exception as ex:
             self.logger.error(f"Fatal error: {ex}", exc_info=True)
 
-    def process_file(self, config_path: str, pdf_path: str) -> int:
+    def process_file(self, config_path: str, pdf_path: str) -> dict:
         """
-        TOOL 4 main method.
+        TOOL 4 main method.  Mirrors LLMParser.processFile()
 
-        Mirrors LLMParser.processFile()
-        Returns: 0=success, 1=failed, 2=waiting
+        CHANGED: now returns _result_summary dict instead of a bare int.
+        The exit code is available at result["result_code"] for callers that
+        need it (DynamicTemplateLLMParser reads it via the int return that is
+        preserved via _invoke_llm_parser, which calls this and reads result_code).
+
+        Returns: _result_summary dict  (REPORTING ONLY — see __init__ for shape)
         """
         self.logger.info(f"process_file: '{pdf_path}'")
         self._load_config(config_path)
+
+        # REPORTING ONLY — capture parser name after config load
+        self._result_summary["parser_name"] = self.parser_name or self.parser_id
+
         self._load_db()
         self._load_column_config()
         rtn = self._load_file(pdf_path)
@@ -119,9 +196,15 @@ class LLMParser:
             self.logger.info("Data import completed successfully.")
         else:
             self.logger.info("Data import failed.")
-        return rtn
 
-    # Config / DB loading
+        # _result_summary already finalised inside _process_input_file;
+        # if _load_file returned early (file-not-found), fill it now.
+        if self._result_summary["result_code"] is None:
+            self._finalize_result_summary(rtn)  # REPORTING ONLY
+
+        return self._result_summary  # REPORTING ONLY
+
+    # ── Config / DB loading ──────────────────────────────────────────────────
     def _load_config(self, config_input: str) -> None:
         """Mirrors LLMParser.loadConfig()"""
         if os.path.isfile(config_input):
@@ -135,7 +218,7 @@ class LLMParser:
             rows = self._get_parser_config_from_db(config_input)
             if not rows:
                 raise RuntimeError(f"No active config found for parser id: {config_input}")
-            config_data = json.loads(rows[0]["config"])
+            config_data       = json.loads(rows[0]["config"])
             self.config       = LLMConfigBean(**config_data)
             self.parser_id    = config_input
             self.parser_name  = rows[0].get("name", "")
@@ -146,17 +229,16 @@ class LLMParser:
         if self.config.show_query:
             self.logger.info(f"Config: {self.config}")
 
-        # Sort commonFields by id  (mirrors Java Comparator)
         self.column_format_list = []
 
     def _get_parser_config_from_db(self, config_input: str) -> list:
         tmp = None
         try:
             tmp = SqlDao(
-                db_type = DBConfig.type(),
-                host  = DBConfig.host(),
-                port = DBConfig.port(),
-                database = DBConfig.database_name(),
+                db_type   = DBConfig.type(),
+                host      = DBConfig.host(),
+                port      = DBConfig.port(),
+                database  = DBConfig.database_name(),
                 user_name = DBConfig.username(),
                 password  = DBConfig.password(),
                 logger    = self.logger,
@@ -175,10 +257,10 @@ class LLMParser:
     def _load_db(self) -> None:
         """Mirrors LLMParser.loadDB()"""
         self.dao = SqlDao(
-            db_type = DBConfig.type(),
-            host  = DBConfig.host(),
-            port = DBConfig.port(),
-            database = DBConfig.database_name(),
+            db_type   = DBConfig.type(),
+            host      = DBConfig.host(),
+            port      = DBConfig.port(),
+            database  = DBConfig.database_name(),
             user_name = DBConfig.username(),
             password  = DBConfig.password(),
             logger    = self.logger,
@@ -192,13 +274,12 @@ class LLMParser:
         self.query_table_column_map = []
         common_db_columns: List[str] = []
 
-        # Check for prompt_order column
         check_q = (
             f"SELECT COUNT(*) as column_count FROM information_schema.columns "
             f"WHERE table_schema = DATABASE() AND table_name = '{self.config.llmPromptDatabaseTable}' "
             f"AND column_name = 'prompt_order'"
         )
-        check_rows = self._get_select_query_results(check_q)
+        check_rows       = self._get_select_query_results(check_q)
         has_prompt_order = int((check_rows[0].get("column_count", 0) or 0)) > 0 if check_rows else False
 
         query = (
@@ -211,7 +292,6 @@ class LLMParser:
             self.logger.info(f"No prompts found for parser_id={self.parser_id}")
             return
 
-        # Common columns
         for row in prompt_rows:
             col = row.get("db_column", "")
             if (row.get("column_type", "").lower() == "common"
@@ -222,7 +302,6 @@ class LLMParser:
             bean = DBColumnMappingBean(id=i + 1, data_type="varchar", sql_column_name=col)
             self.column_format_list.append(bean)
 
-        # parser_file_execution_id column
         if self.config.parserFileExecutionIdColumn:
             bean = DBColumnMappingBean(
                 id              = len(self.column_format_list) + 1,
@@ -231,7 +310,6 @@ class LLMParser:
             )
             self.column_format_list.append(bean)
 
-        # Table columns
         for row in prompt_rows:
             if row.get("column_type", "").lower() == "table" and row.get("db_column"):
                 result_map = self._map_columns_to_values(
@@ -247,7 +325,6 @@ class LLMParser:
                         self.column_format_list.append(bean)
                     self.query_table_column_map.append(result_map)
 
-        # file_name column
         if self.config.fileNameColumn:
             bean = DBColumnMappingBean(
                 id              = len(self.column_format_list) + 1,
@@ -259,13 +336,12 @@ class LLMParser:
 
         self.column_list = self._get_columns_list(self.column_format_list)
 
-    # -----------------------------------------------------------------------
-    # File processing
-    # -----------------------------------------------------------------------
+    # ── File processing ──────────────────────────────────────────────────────
     def _load_file(self, path: str) -> int:
         """Mirrors LLMParser.loadFile()"""
         if not os.path.exists(path):
             self.logger.info(f"Source file does not exist: '{path}'")
+            self.error_message = f"Source file does not exist: '{path}'"  # REPORTING ONLY
             return 1
         try:
             return self._process_input_file(path)
@@ -278,7 +354,10 @@ class LLMParser:
         Mirrors LLMParser.processInputFile()
         Full pipeline: send to QnA API → poll → parse → insert to DB.
         """
-        return_value = 0
+        return_value  = 0
+        records:  List[List[str]]    = []   # REPORTING ONLY — captured for summary
+        task_response: Optional[TaskResponse] = None  # REPORTING ONLY
+
         try:
             st = time.time()
             self.file_bean = ConfigFileBean(
@@ -288,40 +367,42 @@ class LLMParser:
             )
 
             # Send to LLM QnA API
-            task_detail   = self._send_llm_request_and_get_task_detail(file_path)
+            task_detail       = self._send_llm_request_and_get_task_detail(file_path)
             self.qna_trace_id = task_detail.trace_id
 
             task_response = self._track_execution_status(task_detail)
-            
+
             if self.execution_data:
                 self.execution_data.taskResponse = task_response
 
             if task_response.is_fulfilled():
-                result      = self._parse_response(task_response.requestResponse)
-                records     = self._process_response_data(result)
+                result        = self._parse_response(task_response.requestResponse)
+                records       = self._process_response_data(result)
                 self.logger.info(f"Total records found: {len(records)}")
-                return_value = self._load_records_to_db(records)
-                elapsed = int((time.time() - st) * 1000)
+                return_value  = self._load_records_to_db(records)
+                elapsed       = int((time.time() - st) * 1000)
                 self.logger.info(f"Completed {len(records)} records in {elapsed}ms")
 
             elif task_response.status.lower() == FileExecutionStatus.Waiting.value.lower():
                 self.logger.error(f"Task trace_id={task_detail.trace_id} status=Waiting")
                 return_value = 2
-            
+
             else:
                 self.logger.error(f"Task trace_id={task_detail.trace_id} status=Failed")
                 return_value = 1
 
         except Exception as ex:
             self.logger.error(f"processInputFile error: {ex}", exc_info=True)
-            return_value = 1
+            return_value       = 1
             self.error_message = self.error_message or str(ex)
+
+        finally:
+            # REPORTING ONLY — always stamp summary regardless of success/failure
+            self._finalize_result_summary(return_value, records, task_response)
 
         return return_value
 
-    # -----------------------------------------------------------------------
-    # Prompt builder
-    # -----------------------------------------------------------------------
+    # ── Prompt builder ───────────────────────────────────────────────────────
     def _get_parser_prompt_as_llm_query(self) -> Optional[str]:
         """
         Mirrors LLMParser.getParserPromptAsLLMQuery()
@@ -332,7 +413,7 @@ class LLMParser:
             f"WHERE table_schema = DATABASE() AND table_name = '{self.config.llmPromptDatabaseTable}' "
             f"AND column_name = 'prompt_order'"
         )
-        check_rows      = self._get_select_query_results(check_q)
+        check_rows       = self._get_select_query_results(check_q)
         has_prompt_order = int((check_rows[0].get("column_count", 0) or 0)) > 0 if check_rows else False
 
         query = (
@@ -347,16 +428,16 @@ class LLMParser:
 
         queries = []
         for row in prompt_rows:
-            prompt          = row.get("prompt", "")
-            alias           = row.get("db_column", "")
-            value_type      = row.get("value_type") or "string"
-            is_required     = row.get("mandatory_value")
-            key             = row.get("name", "")
+            prompt           = row.get("prompt", "")
+            alias            = row.get("db_column", "")
+            value_type       = row.get("value_type") or "string"
+            is_required      = row.get("mandatory_value")
+            key              = row.get("name", "")
             confidence_score = row.get("confidence_score", "")
-            column_type     = (row.get("column_type") or "").lower()
+            column_type      = (row.get("column_type") or "").lower()
 
             if column_type == "table":
-                table_rows = self._map_columns_to_values_full(
+                table_rows  = self._map_columns_to_values_full(
                     prompt, alias, value_type, is_required, key, confidence_score,
                     remove_first=False
                 )
@@ -364,7 +445,7 @@ class LLMParser:
                 sub_rows    = table_rows[1:]
                 table_entry = {
                     "Table": {
-                        "query": self._build_query_entry(main_row),
+                        "query":   self._build_query_entry(main_row),
                         "queries": [self._build_query_entry(r) for r in sub_rows],
                     }
                 }
@@ -404,9 +485,7 @@ class LLMParser:
             return True
         return str(value).lower() == "true"
 
-    # -----------------------------------------------------------------------
-    # LLM API calls
-    # -----------------------------------------------------------------------
+    # ── LLM API calls ────────────────────────────────────────────────────────
     def _send_llm_request_and_get_task_detail(self, file_path: str) -> TaskDetail:
         """Mirrors LLMParser.sendLLMRequestAndGetTaskDetail()"""
         query_payload     = self._get_parser_prompt_as_llm_query()
@@ -418,23 +497,22 @@ class LLMParser:
         enable_validation = LLMConfig.enable_validation()
         enable_confidence = LLMConfig.enable_confidence()
 
-        exec_id  = self.execution_data.parserFileExecutionId if self.execution_data else str(uuid.uuid4())
+        exec_id   = self.execution_data.parserFileExecutionId if self.execution_data else str(uuid.uuid4())
         tags_json = json.dumps([f"execution_id={exec_id}", "qna"])
 
         form_data = {
-            "query":                  query_payload,
-            "max_token":              max_token,
-            "temperature":            temperature,
-            "enable_validation":      enable_validation,
+            "query":                   query_payload,
+            "max_token":               max_token,
+            "temperature":             temperature,
+            "enable_validation":       enable_validation,
             "enable_confidence_score": enable_confidence,
-            "tags":                   tags_json,
-            "service_type":           self.service_type,
+            "tags":                    tags_json,
+            "service_type":            self.service_type,
         }
 
         response_text = self._post_with_file(api_url, api_token, file_path, form_data, timeout)
         return self._parse_task_detail(response_text)
 
-    
     def _track_execution_status(self, task_detail: TaskDetail) -> TaskResponse:
         """Mirrors LLMParser.trackExecutionStatus()"""
         total_iterations = LLMConfig.status_total_iterations()
@@ -461,7 +539,7 @@ class LLMParser:
             if task_response.status.lower() == TaskExecutionStatus.fulfilled.value:
                 self.logger.info(f"TraceId:{trace_id} — Task completed.")
                 return task_response
-            
+
             elif task_response.status.lower() == TaskExecutionStatus.failed.value:
                 self.logger.info(f"TraceId:{trace_id} — Task failed.")
                 self.error_message = self.error_message or f"Task failed: trace_id={trace_id}"
@@ -471,9 +549,7 @@ class LLMParser:
         task_response.status = FileExecutionStatus.Waiting.value
         return task_response
 
-    # -----------------------------------------------------------------------
-    # Response parsing
-    # -----------------------------------------------------------------------
+    # ── Response parsing ─────────────────────────────────────────────────────
     def _parse_response(self, response: dict) -> Dict[str, Any]:
         """
         Mirrors LLMParser.parseResponse()
@@ -484,9 +560,9 @@ class LLMParser:
         response_array = (response.get("result") or {}).get("response", [])
 
         for node in response_array:
-            alias      = node.get("alias", "")
-            text_val   = node.get("text", "")
-            table_val  = node.get("table")
+            alias     = node.get("alias", "")
+            text_val  = node.get("text", "")
+            table_val = node.get("table")
 
             if isinstance(table_val, list):
                 table_list = []
@@ -516,11 +592,9 @@ class LLMParser:
                 common_record[i] = result[col]
                 exec_id_index   += 1
 
-        # Inject parserFileExecutionId
         if self.config.parserFileExecutionIdColumn and self.execution_data:
             common_record[exec_id_index] = self.execution_data.parserFileExecutionId
 
-        # Collect table data
         tables = {k: v for k, v in result.items() if isinstance(v, list)}
 
         if not tables:
@@ -538,9 +612,7 @@ class LLMParser:
 
         return records
 
-    # -----------------------------------------------------------------------
-    # DB insert
-    # -----------------------------------------------------------------------
+    # ── DB insert ────────────────────────────────────────────────────────────
     def _load_records_to_db(self, records: List[List[str]]) -> int:
         """Mirrors LLMParser.loadRecordsToDB()"""
         if not records:
@@ -550,17 +622,15 @@ class LLMParser:
         db_type = self.config.sql
         if db_type.lower() == MYSQL_DB:
             query = f"INSERT IGNORE INTO {self.config.table} ({self.column_list}) VALUES \n"
-        # elif db_type.lower() == MSSQL_DB:
-        #     query = f"INSERT INTO {self.config.table} ({self.column_list}) VALUES \n"
         else:
             raise ValueError(f"Unsupported DB type: {db_type}")
 
-        params_list: List[List[str]] = []
-        val_placeholders = []
+        params_list:      List[List[str]] = []
+        val_placeholders: List[str]       = []
 
         for record in records:
-            row_params = []
-            placeholders = []
+            row_params:   List[str] = []
+            placeholders: List[str] = []
             try:
                 for i, bean in enumerate(self.column_format_list):
                     if (bean.data_type or "").lower() == DATA_IGNORE.lower():
@@ -599,12 +669,10 @@ class LLMParser:
                 return self.file_bean.fileName if self.file_bean else ""
         return value if value is not None else ""
 
-    # -----------------------------------------------------------------------
-    # Column list builder
-    # -----------------------------------------------------------------------
+    # ── Column list builder ──────────────────────────────────────────────────
     def _get_columns_list(self, format_list: List[DBColumnMappingBean]) -> str:
         """Mirrors LLMParser.getColumnsList()"""
-        parts = []
+        parts   = []
         db_type = (self.config.sql or MYSQL_DB).lower()
         for bean in format_list:
             if (bean.data_type or "").lower() == DATA_IGNORE.lower():
@@ -615,34 +683,30 @@ class LLMParser:
                 parts.append(f"`{bean.sql_column_name}`")
         return ", ".join(parts)
 
-    # -----------------------------------------------------------------------
-    # HTTP helpers
-    # -----------------------------------------------------------------------
+    # ── HTTP helpers ─────────────────────────────────────────────────────────
     def _post_with_file(self, url: str, token: str, file_path: str,
                         form_data: dict, timeout: int) -> str:
         """Mirrors LLMParser.sendPostRequestWithFileInput()"""
         timeout = max(timeout, 30)
         self.logger.info(f"POST → {url}  file='{file_path}'")
 
-        ext = os.path.splitext(file_path)[1].lower()
-        media_types = {".pdf": "application/pdf", ".png": "image/png",
-                       ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
-        media_type = media_types.get(ext, "application/octet-stream")
+        ext        = os.path.splitext(file_path)[1].lower()
+        media_type = {".pdf": "application/pdf", ".png": "image/png",
+                      ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}.get(ext, "application/octet-stream")
 
         with open(file_path, "rb") as fh:
             files = {"files": (os.path.basename(file_path), fh, media_type)}
 
-            # Attach example files if configured
             example_parts = self._get_example_file_parts()
             if example_parts:
                 files.update(example_parts)
 
-            headers  = {"Authorization": f"Bearer {token}"}
-            resp     = requests.post(url, headers=headers, files=files,
-                                     data=form_data, timeout=timeout)
+            headers = {"Authorization": f"Bearer {token}"}
+            resp    = requests.post(url, headers=headers, files=files,
+                                    data=form_data, timeout=timeout)
 
         if not resp.ok:
-            body = resp.text
+            body               = resp.text
             self.error_message = self.error_message or body
             self.logger.error(f"POST failed {resp.status_code}: {body}")
             resp.raise_for_status()
@@ -651,9 +715,7 @@ class LLMParser:
         return resp.text
 
     def _get_example_file_parts(self) -> dict:
-        """
-        Mirrors LLMParser.createFileMap() — attaches example files if configured.
-        """
+        """Mirrors LLMParser.createFileMap() — attaches example files if configured."""
         if not self.parser_id:
             return {}
         base_path = cfg("HACHIAI_LLM_EXAMPLE_FILES_BASE_PATH", "")
@@ -662,7 +724,6 @@ class LLMParser:
         example_dir = os.path.join(base_path, self.parser_id)
         if not os.path.isdir(example_dir):
             return {}
-
         parts = {}
         for name in os.listdir(example_dir):
             full = os.path.join(example_dir, name)
@@ -684,7 +745,7 @@ class LLMParser:
         resp = requests.get(url, headers={"Authorization": f"Bearer {token}"},
                             timeout=max(timeout, 30))
         if not resp.ok:
-            body = resp.text
+            body               = resp.text
             self.error_message = self.error_message or body
             self.logger.error(f"GET failed {resp.status_code}: {body}")
             resp.raise_for_status()
@@ -692,9 +753,7 @@ class LLMParser:
         self.logger.info(f"Response: {resp.text}")
         return resp.text
 
-    # -----------------------------------------------------------------------
-    # Parsing helpers  (mirrors static Util methods in Java)
-    # -----------------------------------------------------------------------
+    # ── Parsing helpers ──────────────────────────────────────────────────────
     @staticmethod
     def _parse_task_detail(json_text: str) -> TaskDetail:
         d = json.loads(json_text)
@@ -704,11 +763,11 @@ class LLMParser:
     def _parse_task_response(json_text: str) -> TaskResponse:
         d = json.loads(json_text)
         return TaskResponse(
-            status           = d.get("status", ""),
-            value            = d.get("value", ""),
-            requestResponse  = d.get("request_response", {}),
-            total_pages      = int(d.get("total_pages", 0) or 0),
-            pages_processed  = int(d.get("pages_processed", 0) or 0),
+            status          = d.get("status", ""),
+            value           = d.get("value", ""),
+            requestResponse = d.get("request_response", {}),
+            total_pages     = int(d.get("total_pages", 0) or 0),
+            pages_processed = int(d.get("pages_processed", 0) or 0),
         )
 
     @staticmethod
@@ -717,11 +776,9 @@ class LLMParser:
         """Mirrors Util.mapColumnsToValues()"""
         prompt_parts = [p.strip() for p in prompt.split("|")]
         column_parts = [c.strip() for c in db_columns.split(",")]
-
         if remove_first:
             prompt_parts = prompt_parts[1:]
             column_parts = column_parts[1:]
-
         length = min(len(prompt_parts), len(column_parts))
         return {column_parts[i]: prompt_parts[i] for i in range(length)}
 
@@ -729,9 +786,6 @@ class LLMParser:
     def _map_columns_to_values_full(prompt, db_columns, value_types, mandatory_values,
                                      keys, confidence_score, remove_first=False) -> List[Dict[str, str]]:
         """Mirrors Util.mapColumnsToValuesFull()"""
-        def split_trim(s):
-            return [x.strip() for x in s.split("|" if "|" in (s or "") else ",")] if s else []
-
         prompt_parts     = [p.strip() for p in (prompt or "").split("|")]
         column_parts     = [c.strip() for c in (db_columns or "").split(",")]
         type_parts       = [t.strip() for t in (value_types or "").split(",")]
@@ -751,18 +805,16 @@ class LLMParser:
         rows   = []
         for i in range(length):
             rows.append({
-                "Text":            prompt_parts[i],
-                "Alias":           column_parts[i],
-                "Type":            type_parts[i] if i < len(type_parts) and type_parts[i] else "string",
-                "IsRequired":      required_parts[i] if i < len(required_parts) and required_parts[i] else "true",
-                "Key":             key_parts[i] if i < len(key_parts) and key_parts[i] else "",
+                "Text":             prompt_parts[i],
+                "Alias":            column_parts[i],
+                "Type":             type_parts[i] if i < len(type_parts) and type_parts[i] else "string",
+                "IsRequired":       required_parts[i] if i < len(required_parts) and required_parts[i] else "true",
+                "Key":              key_parts[i] if i < len(key_parts) and key_parts[i] else "",
                 "confidence_score": confidence_parts[i] if i < len(confidence_parts) and confidence_parts[i] else "",
             })
         return rows
 
-    # -----------------------------------------------------------------------
-    # DB query helpers
-    # -----------------------------------------------------------------------
+    # ── DB query helpers ─────────────────────────────────────────────────────
     def _get_select_query_results(self, query: str) -> list:
         try:
             self.logger.info(f"Select Query = {query}")

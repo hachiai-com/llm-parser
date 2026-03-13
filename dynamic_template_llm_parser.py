@@ -73,7 +73,7 @@ class DynamicTemplateLLMParser:
 
     Usage:
         parser = DynamicTemplateLLMParser(config_file_path, source_input)
-        parser.run()
+        result = parser.run()   # now returns _result_summary dict
 
     CLI:
         python dynamic_template_llm_parser.py --config <id_or_file> --source <path>
@@ -88,15 +88,80 @@ class DynamicTemplateLLMParser:
         self.config: Optional[LLMConfigBean] = None
         self.dao:    Optional[SqlDao]         = None
 
+        # ── REPORTING ONLY ────────────────────────────────────────────────────
+        # These variables are populated during execution solely for returning a
+        # rich result summary to the caller. They are never used for any logic.
+        self._result_summary: dict = {
+            "parser_file_execution_id": self.parser_file_execution_id,
+            "config_id":   config_file_path,
+            "source":      source_input,
+            "files":       [],   # one entry per processed file (see _make_file_entry)
+            "total_files":     0,
+            "skipped_files":   0,
+            "completed_files": 0,
+            "failed_files":    0,
+            "waiting_files":   0,
+            "unapproved_files": 0,
+            "started_at":  datetime.utcnow().isoformat() + "Z",
+            "finished_at": None,
+            "duration_ms": None,
+            "error":       None,
+        }
+        self._result_summary_start_ms: float = time.time() * 1000  # REPORTING ONLY
+
+    # ── REPORTING ONLY helper ─────────────────────────────────────────────────
+    @staticmethod
+    def _make_file_entry(file_path: str) -> dict:
+        """
+        REPORTING ONLY — creates the per-file dict that is appended to
+        _result_summary["files"]. Nothing in this dict is read back for logic.
+        """
+        return {
+            "file_name":              os.path.basename(file_path),
+            "file_path":              file_path,
+            "status":                 None,   # filled by _process_single_file
+            "vendor_text":            None,   # filled after Tool 2
+            "matched_vendor":         None,   # filled after Tool 3
+            "matched_parser_id":      None,   # filled after Tool 3
+            "conversation_trace_id":  None,   # filled after Tool 2
+            "qna_trace_id":           None,   # filled after Tool 4
+            "error_message":          None,   # filled on failure
+            "duration_ms":            None,   # filled at end of _process_single_file
+        }
+
+    def _finalize_result_summary(self) -> None:
+        """REPORTING ONLY — stamps finish time and aggregates file counters."""
+        now_ms = time.time() * 1000
+        self._result_summary["finished_at"] = datetime.utcnow().isoformat() + "Z"
+        self._result_summary["duration_ms"] = round(now_ms - self._result_summary_start_ms)
+        for entry in self._result_summary["files"]:
+            s = entry.get("status")
+            if s == str(FileExecutionStatus.Completed):
+                self._result_summary["completed_files"] += 1
+            elif s == str(FileExecutionStatus.Failed):
+                self._result_summary["failed_files"] += 1
+            elif s == str(FileExecutionStatus.Waiting):
+                self._result_summary["waiting_files"] += 1
+            elif s == str(FileExecutionStatus.Unapproved):
+                self._result_summary["unapproved_files"] += 1
+
     # ── run ─────────────────────────────────────────────────────────────────
-    def run(self) -> None:
+    def run(self) -> dict:
+        """
+        Executes the parser and returns _result_summary.
+        The return value is REPORTING ONLY — callers can display it but must
+        not use it to drive any further parsing logic.
+        """
         try:
             self._execute_matched_parser(self.source_input)
         except Exception as ex:
             self.logger.error(f"Fatal error: {ex}", exc_info=True)
+            self._result_summary["error"] = str(ex)  # REPORTING ONLY
         finally:
             if self.dao:
                 self._destroy()
+            self._finalize_result_summary()  # REPORTING ONLY
+        return self._result_summary  # REPORTING ONLY
 
     # ── TOOL 1 — validate_input ─────────────────────────────────────────────
     def tool1_validate_input(self, config_input: str, source_path: str) -> dict:
@@ -112,10 +177,6 @@ class DynamicTemplateLLMParser:
             - Checks the file/directory exists.
             - Filters files by supported extensions (.pdf, .png, .jpg, .jpeg).
             - Runs multi-invoice skip check (if enabled via env).
-
-        Mirrors:
-            Tool 0: DynamicTemplateLLMParser.loadConfig()
-            Tool 1: DynamicTemplateLLMParser.startProcessing()
 
         Returns:
             {
@@ -139,7 +200,6 @@ class DynamicTemplateLLMParser:
                 "error": config_error,
             }
 
-        # # Open the DAO connection using the freshly loaded config
         self._load_db()
         self.logger.info("DB connection established.")
 
@@ -166,8 +226,8 @@ class DynamicTemplateLLMParser:
             self.logger.info(f"No supported files found in directory: '{source_path}'")
 
         # checker = MultiInvoiceChecker() if MultiInvoiceConfig.skip() else None
-        checker      = None
-        valid_files  = []
+        checker       = None
+        valid_files   = []
         skipped_files = []
 
         for abs_path in candidate_paths:
@@ -186,6 +246,10 @@ class DynamicTemplateLLMParser:
                 continue
             valid_files.append({"path": abs_path, "valid": True, "skip": False, "reason": ""})
 
+        # REPORTING ONLY — record totals so callers can display them
+        self._result_summary["total_files"]   = len(valid_files)
+        self._result_summary["skipped_files"] = len(skipped_files)
+
         self.logger.info(
             f"TOOL 1 complete — config_loaded=True  valid={len(valid_files)}  skipped={len(skipped_files)}"
         )
@@ -201,9 +265,7 @@ class DynamicTemplateLLMParser:
         """
         Resolves config from three possible inputs and sets self.config.
         Returns an error string on failure, or None on success.
-        Mirrors the original Tool 0 / loadConfig() logic.
         """
-        # Already a loaded LLMConfigBean — use directly
         if isinstance(config_input, LLMConfigBean):
             self.logger.info("Config provided as LLMConfigBean — using directly.")
             self.config = config_input
@@ -211,7 +273,6 @@ class DynamicTemplateLLMParser:
 
         config_input = str(config_input).strip()
 
-        # Path to a JSON config file on disk
         if os.path.isfile(config_input):
             self.logger.info(f"Loading config from file: '{config_input}'")
             try:
@@ -223,7 +284,6 @@ class DynamicTemplateLLMParser:
             except Exception as ex:
                 return f"Failed to load config file '{config_input}': {ex}"
 
-        # Numeric string — treat as parser id, fetch from DB
         if config_input.isdigit():
             self.logger.info(f"Loading config from DB for parser id: '{config_input}'")
             rows = self._get_parser_config_from_db(config_input)
@@ -243,14 +303,14 @@ class DynamicTemplateLLMParser:
         return f"Config not recognised (not a file path, not a numeric id): '{config_input}'"
 
     def _get_parser_config_from_db(self, config_input: str) -> list:
-        """Short-lived connection using .env DB creds. Mirrors Parser.getParserConfigFromDB()"""
+        """Short-lived connection using .env DB creds."""
         tmp_dao = None
         try:
             tmp_dao = SqlDao(
-                db_type = DBConfig.type(),
-                host  = DBConfig.host(),
-                port = DBConfig.port(),
-                database = DBConfig.database_name(),
+                db_type   = DBConfig.type(),
+                host      = DBConfig.host(),
+                port      = DBConfig.port(),
+                database  = DBConfig.database_name(),
                 user_name = DBConfig.username(),
                 password  = DBConfig.password(),
                 logger    = self.logger,
@@ -268,10 +328,10 @@ class DynamicTemplateLLMParser:
 
     def _load_db(self) -> None:
         self.dao = SqlDao(
-            db_type = DBConfig.type(),
-            host  = DBConfig.host(),
-            port = DBConfig.port(),
-            database = DBConfig.database_name(),
+            db_type   = DBConfig.type(),
+            host      = DBConfig.host(),
+            port      = DBConfig.port(),
+            database  = DBConfig.database_name(),
             user_name = DBConfig.username(),
             password  = DBConfig.password(),
             logger    = self.logger,
@@ -291,12 +351,7 @@ class DynamicTemplateLLMParser:
         """
         TOOL 2: identify_vendor  (1st LLM API call)
         Sends document to Conversation API, polls for result, returns full TaskResponse.
- 
-        CHANGED (matches updated Java): now returns the full TaskResponse object
-        instead of just the extracted string value. Callers are responsible for
-        checking task_response.is_fulfilled() / task_response.is_failed().
- 
-        Mirrors: DynamicTemplateLLMParser.getInputFileText() [updated Java version]
+        Mirrors: DynamicTemplateLLMParser.getInputFileText()
         """
         self.logger.info(f"TOOL 2 — identify_vendor: file='{file_path}'")
         task_response = None
@@ -358,13 +413,6 @@ class DynamicTemplateLLMParser:
         TOOL 3: match_vendor_parser
         Queries vendor reference table for a match, then fetches parser config.
         Mirrors: DynamicTemplateLLMParser.getVendorParserDetailIfMatchedInFile()
-        Returns:
-            {
-                "vendor_match": dict | None,
-                "parser_id":    str | None,
-                "config_class": str | None,
-                "parser_type":  str | None,
-            }
         """
         self.logger.info(f"TOOL 3 — match_vendor_parser: vendor_text='{vendor_text}'")
         self.logger.info(f"self.config {self.config}")
@@ -392,7 +440,7 @@ class DynamicTemplateLLMParser:
             "LEFT JOIN parser_config_type pct ON pc.parser_type = pct.parser_type "
             f"WHERE pc.id = {parser_id};"
         )
-        config_rows  = self._get_select_query_results_via_parent_account(query)
+        config_rows = self._get_select_query_results_via_parent_account(query)
         if not config_rows:
             self.logger.info(f"parser_id={parser_id} not found in parser_config.")
             return {"vendor_match": matched_vendor, "parser_id": parser_id,
@@ -426,7 +474,6 @@ class DynamicTemplateLLMParser:
         elif not self.config.fileParsingStatusReferenceDBTable:
             return
 
-        # total_pages and pages_processed come from executionData.taskResponse
         total_pages = "0"
         pages_processed = "0"
         if self.execution_data.taskResponse is not None:
@@ -487,87 +534,136 @@ class DynamicTemplateLLMParser:
         validation = self.tool1_validate_input(self.config_file_path, source_path)
         if validation["error"]:
             self.logger.info(f"Validation error: {validation['error']}")
+            self._result_summary["error"] = validation["error"]  # REPORTING ONLY
             return
         for file_entry in validation["valid_files"]:
             self._process_single_file(file_entry["path"])
 
-    
     def _process_single_file(self, file_path: str) -> None:
         """
-        CHANGED: Mirrors the updated Java executeMatchedParser() logic.
- 
-        Old behaviour: tool2_identify_vendor() returned a string; empty string → Waiting.
-        New behaviour:
-          1. tool2_identify_vendor() returns a TaskResponse (or None).
-          2. None response          → Failed  (move file)
-          3. isFailed() response    → Failed  (move file)
-          4. isFulfilled() response → extract text, continue
-          5. Empty extracted text   → Waiting (do NOT move file)
+        Mirrors the updated Java executeMatchedParser() logic.
+
+        1. tool2_identify_vendor() returns a TaskResponse (or None).
+        2. None response          → Failed  (move file)
+        3. isFailed() response    → Failed  (move file)
+        4. isFulfilled() response → extract text, continue
+        5. Empty extracted text   → Waiting (do NOT move file)
         """
         if not os.path.exists(file_path):
             self.logger.info(f"File not found: '{file_path}'")
             return
- 
+
+        # REPORTING ONLY — create per-file tracking entry
+        _file_entry = self._make_file_entry(file_path)
+        _file_start_ms = time.time() * 1000
+
         # ── Step 1: Call Conversation API (Tool 2) ───────────────────────────
         task_response = self.tool2_identify_vendor(file_path)
- 
+
+        # REPORTING ONLY — capture conversation trace id
+        _file_entry["conversation_trace_id"] = self.execution_data.conversationTraceId
+
         if task_response is None:
-            # Response object itself is None — unexpected failure
             self.logger.info("Conversation API returned None response — marking Failed.")
             self.tool5_update_execution_status(file_path, FileExecutionStatus.Failed)
+            # REPORTING ONLY
+            _file_entry["status"] = str(FileExecutionStatus.Failed)
+            _file_entry["error_message"] = "Conversation API returned None response"
+            _file_entry["duration_ms"] = round(time.time() * 1000 - _file_start_ms)
+            self._result_summary["files"].append(_file_entry)
             return
- 
-        # Store raw response value in execution data regardless of status
+
         self.execution_data.textFromConversationAPI = task_response.value
- 
+
         if task_response.is_failed():
-            # API explicitly reported failure
             self.logger.info("Parser execution stopped because conversation API failed.")
             self.tool5_update_execution_status(file_path, FileExecutionStatus.Failed)
+            # REPORTING ONLY
+            _file_entry["status"] = str(FileExecutionStatus.Failed)
+            _file_entry["error_message"] = "Conversation API reported failure"
+            _file_entry["duration_ms"] = round(time.time() * 1000 - _file_start_ms)
+            self._result_summary["files"].append(_file_entry)
             return
- 
-        # Extract text only when fulfilled
+
         file_text = ""
         if task_response.is_fulfilled():
             file_text = task_response.value
- 
+
+        # REPORTING ONLY — capture vendor text extracted by the conversation API
+        _file_entry["vendor_text"] = file_text
+
         if not file_text:
-            # Fulfilled but empty, or neither fulfilled nor failed (e.g. still pending)
             self.logger.info("Conversation API didn't provide matching text — marking Waiting.")
             self.tool5_update_execution_status(file_path, FileExecutionStatus.Waiting)
+            # REPORTING ONLY
+            _file_entry["status"] = str(FileExecutionStatus.Waiting)
+            _file_entry["error_message"] = "Conversation API returned no vendor text"
+            _file_entry["duration_ms"] = round(time.time() * 1000 - _file_start_ms)
+            self._result_summary["files"].append(_file_entry)
             return
- 
+
         # ── Step 2: Match vendor (Tool 3) ────────────────────────────────────
         match_result = self.tool3_match_vendor_parser(file_text)
- 
+
+        # REPORTING ONLY — capture match details
+        _file_entry["matched_vendor"]    = match_result.get("vendor_match") and \
+                                           match_result["vendor_match"].get(self.config.templateReferenceDBColumn)
+        _file_entry["matched_parser_id"] = match_result.get("parser_id")
+
         if not match_result.get("vendor_match"):
             self.logger.info("No vendor match — marking Unapproved.")
             self.tool5_update_execution_status(file_path, FileExecutionStatus.Unapproved)
+            # REPORTING ONLY
+            _file_entry["status"] = str(FileExecutionStatus.Unapproved)
+            _file_entry["error_message"] = "No matching vendor template found"
+            _file_entry["duration_ms"] = round(time.time() * 1000 - _file_start_ms)
+            self._result_summary["files"].append(_file_entry)
             return
- 
+
         if not match_result.get("config_class"):
             self.execution_data.errorMessage = "Parser not found in parser_config table."
             self.tool5_update_execution_status(file_path, FileExecutionStatus.Failed)
+            # REPORTING ONLY
+            _file_entry["status"] = str(FileExecutionStatus.Failed)
+            _file_entry["error_message"] = self.execution_data.errorMessage
+            _file_entry["duration_ms"] = round(time.time() * 1000 - _file_start_ms)
+            self._result_summary["files"].append(_file_entry)
             return
- 
+
         # ── Step 3: Invoke matched parser (Tool 4) ───────────────────────────
         result = self._invoke_llm_parser(
             parser_id=match_result["parser_id"],
             config_class=match_result["config_class"],
             file_path=file_path,
         )
+
+        # REPORTING ONLY — capture qna trace id set by the invoked parser
+        _file_entry["qna_trace_id"] = self.execution_data.qnaTraceTraceId
+
         status_map = {0: FileExecutionStatus.Completed, 2: FileExecutionStatus.Waiting}
-        self.tool5_update_execution_status(file_path, status_map.get(result, FileExecutionStatus.Failed))
+        final_status = status_map.get(result, FileExecutionStatus.Failed)
+        self.tool5_update_execution_status(file_path, final_status)
+
+        # REPORTING ONLY — finalise file entry
+        _file_entry["status"] = str(final_status)
+        # Always surface an error_message on non-Completed outcomes so callers
+        # never see status=Failed with error_message=null. Pulled from
+        # execution_data (set by the invoked parser on exception), falling back
+        # to a generic exit-code description if errorMessage was not populated.
+        if final_status != FileExecutionStatus.Completed:
+            _file_entry["error_message"] = (
+                self.execution_data.errorMessage
+                or f"Parser returned exit code {result} (expected 0 for success)"
+            )
+        _file_entry["duration_ms"] = round(time.time() * 1000 - _file_start_ms)
+        self._result_summary["files"].append(_file_entry)
 
     def _invoke_llm_parser(self, parser_id: str, config_class: str, file_path: str) -> int:
         """TOOL 4 bridge — mirrors Class.forName() reflection in Java."""
         self.logger.info(f"Invoking — class='{config_class}'  parser_id='{parser_id}'")
-        
-        # ── Java → Python class mapping ──────────────────────────────────────
+
         JAVA_TO_PYTHON_CLASS_MAP = {
             "com.uxplore.utils.llm.LLMParser": "llm_parser.LLMParser",
-            # Add more mappings here as you port other parsers:
-            # "com.uxplore.utils.llm.SomeOtherParser":        "some_other_parser.SomeOtherParser",
         }
 
         python_class_path = JAVA_TO_PYTHON_CLASS_MAP.get(config_class)
@@ -583,23 +679,26 @@ class DynamicTemplateLLMParser:
             module_path, class_name = python_class_path.rsplit(".", 1)
             cls      = getattr(importlib.import_module(module_path), class_name)
             instance = cls(parser_id, file_path)
-            
+
             if hasattr(instance, "set_logger"):
                 instance.set_logger(self.logger)
-            
+
             if hasattr(instance, "set_execution_data"):
                 instance.set_execution_data(self.execution_data)
-            
+
             result = instance.process_file(parser_id, file_path)
-            
+
             if hasattr(instance, "qna_trace_id"):
                 self.execution_data.qnaTraceTraceId = instance.qna_trace_id
-            
+
             if hasattr(instance, "error_message"):
                 self.execution_data.errorMessage = self.execution_data.errorMessage or instance.error_message
-            
+
+            if isinstance(result, dict):
+                return result.get("result_code", 1)
+
             return result
-        
+
         except Exception as ex:
             self.logger.error(f"Error invoking '{python_class_path}': {ex}", exc_info=True)
             self.execution_data.errorMessage = str(ex)
@@ -664,14 +763,14 @@ class DynamicTemplateLLMParser:
         tmp_dao = None
         try:
             tmp_dao = SqlDao(
-                db_type = DBConfig.type(),
-                host  = DBConfig.host(),
-                port = DBConfig.port(),
-                database = DBConfig.database_name(),
+                db_type   = DBConfig.type(),
+                host      = DBConfig.host(),
+                port      = DBConfig.port(),
+                database  = DBConfig.database_name(),
                 user_name = DBConfig.username(),
                 password  = DBConfig.password(),
                 logger    = self.logger,
-                )
+            )
             return tmp_dao.run_query(query, None)
         except Exception as ex:
             self.logger.error(f"Parent account query failed: {ex}", exc_info=True)
