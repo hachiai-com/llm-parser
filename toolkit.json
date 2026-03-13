@@ -1,7 +1,7 @@
 {
   "slug": "llm-parser",
   "display_name": "LLM Parser",
-  "description": "A comprehensive toolkit for parsing PDF, PNG, JPG, and JPEG documents using LLMs. It identifies document templates dynamically and extracts information based on database configurations.",
+  "description": "Extracts structured data from PDF, PNG, JPG, and JPEG documents using LLMs. Supports two modes: (1) dynamic mode, where the toolkit automatically identifies the correct parser template by analysing the document content against a vendor reference database — use this when you do not know which template to use; and (2) direct mode, where a specific known parser configuration is applied immediately — use this when you already know the exact template and their corresponding parser ID or config for the document.",
   "version": "0.1.0",
   "entrypoint": {
     "type": "python",
@@ -10,17 +10,17 @@
   "capabilities": [
     {
       "name": "dynamic_template_llm_parser",
-      "description": "Dynamically identifies the appropriate parser template from the database based on document content, then extracts information from the specified file or directory according to the matched template.",
+      "description": "USE THIS when you do not know which parser template applies to the document. This capability first sends the document to an LLM to extract identifying information (e.g. company name, layout features), then queries the vendor reference database to find a matching parser template, and finally runs that matched parser to extract structured data. Requires a dynamic parser config ID (the orchestrator config, not a specific vendor parser). Fails with 'Unapproved' if no vendor match is found in the database.",
       "schema": {
         "type": "object",
         "properties": {
           "config": {
             "type": "string",
-            "description": "Config JSON file path or numeric parser ID"
+            "description": "The numeric ID or JSON file path of the parser config (e.g. '7841'). This is the top-level config that manages vendor matching, NOT a vendor-specific parser ID."
           },
           "source": {
             "type": "string",
-            "description": "Full path to the source file or directory for parsing"
+            "description": "Absolute path to the source PDF, image file, or directory of files to parse."
           }
         },
         "required": ["config", "source"]
@@ -28,17 +28,17 @@
     },
     {
       "name": "llm_parser",
-      "description": "Parses the specified file or directory using a specific pre-defined LLM template parser configuration.",
+      "description": "USE THIS when you already know the exact template and its exact parser ID or config for the document. This capability skips vendor identification and directly applies the specified LLM parser configuration to extract structured data from the document. Faster than dynamic_template_llm_parser because it makes one fewer LLM API call. Do NOT use this if the correct parser or template is unknown is unknown — use dynamic_template_llm_parser instead.",
       "schema": {
         "type": "object",
         "properties": {
           "config": {
             "type": "string",
-            "description": "Config JSON file path or numeric parser ID"
+            "description": "The numeric ID of config id or JSON file path of the specific parser config to apply directly (e.g. '7840'). Must match an active entry in the parser_config table."
           },
           "source": {
             "type": "string",
-            "description": "Full path to the source file or directory for parsing"
+            "description": "Absolute path to the source PDF, image file, or directory of files to parse."
           }
         },
         "required": ["config", "source"]
@@ -47,5 +47,5 @@
   ],
   "author": "HachiAI",
   "homepage": "https://github.com/hachiai-com/llm-parser",
-  "tags": ["idms", "invoice", "llm parser", "pdf", "data-extraction"]
+  "tags": ["idms", "invoice", "llm-parser", "pdf", "data-extraction", "ocr", "document-processing"]
 }
