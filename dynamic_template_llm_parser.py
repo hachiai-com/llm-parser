@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 import requests
-from config import cfg, cfg_int, cfg_bool, DBConfig, LLMConfig, MultiInvoiceConfig
+from config import DBConfig, LLMConfig, MultiInvoiceConfig
 from constants import MYSQL_DB, FileExecutionStatus, TaskExecutionStatus
 from logger import get_static_logger, get_instance_logger, close_instance_logger
 from sql_dao import SqlDao
