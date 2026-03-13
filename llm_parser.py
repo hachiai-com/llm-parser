@@ -1,7 +1,7 @@
 """
 Python equivalent of LLMParser.java
 
-TOOL 4 — execute_parser
+execute_parser
 
 Responsibility:
   - Load prompts from DB (llmPromptDatabaseTable)
@@ -173,7 +173,7 @@ class LLMParser:
 
     def process_file(self, config_path: str, pdf_path: str) -> dict:
         """
-        TOOL 4 main method.  Mirrors LLMParser.processFile()
+        execute_parser main method.  Mirrors LLMParser.processFile()
 
         CHANGED: now returns _result_summary dict instead of a bare int.
         The exit code is available at result["result_code"] for callers that

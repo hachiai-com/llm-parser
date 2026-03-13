@@ -3,6 +3,7 @@
   "display_name": "LLM Parser",
   "description": "Extracts structured data from PDF, PNG, JPG, and JPEG documents using LLMs. Supports two modes: (1) dynamic mode, where the toolkit automatically identifies the correct parser template by analysing the document content against a vendor reference database — use this when you do not know which template to use; and (2) direct mode, where a specific known parser configuration is applied immediately — use this when you already know the exact template and their corresponding parser ID or config for the document.",
   "version": "0.1.0",
+  "timeout": 300,
   "entrypoint": {
     "type": "python",
     "command": "python main.py"

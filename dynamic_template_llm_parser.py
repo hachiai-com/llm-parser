@@ -1,12 +1,11 @@
 """
 Python equivalent of DynamicTemplateLLMParser.java
 
-Tools implemented:
-    TOOL 1 - validate_input          : load config (from LLMConfigBean or DB using id),
-                                       check file/dir, extension, multi-invoice skip
-    TOOL 2 - identify_vendor         : send doc to Conversation API, extract vendor text
-    TOOL 3 - match_vendor_parser     : match vendor text against DB, get parser class
-    TOOL 5 - update_execution_status : write status to DB, move files, cleanup
+Main implemented:
+    - validate_input          : load config (from LLMConfigBean or DB using id), check file/dir, extension, multi-invoice skip
+    - identify_vendor         : send doc to Conversation API, extract vendor text
+    - match_vendor_parser     : match vendor text against DB, get parser class
+    - update_execution_status : write status to DB, move files, cleanup
 
 CLI:
     python dynamic_template_llm_parser.py --config <id> --source <path>
@@ -120,11 +119,11 @@ class DynamicTemplateLLMParser:
             "file_name":              os.path.basename(file_path),
             "file_path":              file_path,
             "status":                 None,   # filled by _process_single_file
-            "vendor_text":            None,   # filled after Tool 2
-            "matched_vendor":         None,   # filled after Tool 3
-            "matched_parser_id":      None,   # filled after Tool 3
-            "conversation_trace_id":  None,   # filled after Tool 2
-            "qna_trace_id":           None,   # filled after Tool 4
+            "vendor_text":            None,   # filled after identify_vendor
+            "matched_vendor":         None,   # filled after match_vendor_parser
+            "matched_parser_id":      None,   # filled after match_vendor_parser
+            "conversation_trace_id":  None,   # filled after identify_vendor
+            "qna_trace_id":           None,   # filled after invoke_llm_parser
             "error_message":          None,   # filled on failure
             "duration_ms":            None,   # filled at end of _process_single_file
         }
@@ -163,10 +162,10 @@ class DynamicTemplateLLMParser:
             self._finalize_result_summary()  # REPORTING ONLY
         return self._result_summary  # REPORTING ONLY
 
-    # ── TOOL 1 — validate_input ─────────────────────────────────────────────
-    def tool1_validate_input(self, config_input: str, source_path: str) -> dict:
+    # ── validate_input ──────────────────────────────────────────────────────
+    def validate_input(self, config_input: str, source_path: str) -> dict:
         """
-        TOOL 1: validate_input
+        validate_input:
         Step A — Config resolution:
             - If `config_input` is an LLMConfigBean instance, use it directly.
             - If `config_input` is a path to a JSON file, load it from disk.
@@ -187,7 +186,7 @@ class DynamicTemplateLLMParser:
                 "error":         str | None
             }
         """
-        self.logger.info(f"TOOL 1 — validate_input: config='{config_input}'  source='{source_path}'")
+        self.logger.info(f"validate_input: config='{config_input}'  source='{source_path}'")
 
         # ── Step A: Resolve & load config ────────────────────────────────────
         config_error = self._resolve_config(config_input)
@@ -251,7 +250,7 @@ class DynamicTemplateLLMParser:
         self._result_summary["skipped_files"] = len(skipped_files)
 
         self.logger.info(
-            f"TOOL 1 complete — config_loaded=True  valid={len(valid_files)}  skipped={len(skipped_files)}"
+            f"validate_input complete — config_loaded=True  valid={len(valid_files)}  skipped={len(skipped_files)}"
         )
         return {
             "config_loaded": True,
@@ -346,14 +345,14 @@ class DynamicTemplateLLMParser:
             if os.path.isfile(os.path.join(directory, name)) and SUPPORTED_EXT_RE.search(name)
         ]
 
-    # ── TOOL 2 — identify_vendor ────────────────────────────────────────────
-    def tool2_identify_vendor(self, file_path: str) -> Optional[TaskResponse]:
+    # ── identify_vendor ─────────────────────────────────────────────────────
+    def identify_vendor(self, file_path: str) -> Optional[TaskResponse]:
         """
-        TOOL 2: identify_vendor  (1st LLM API call)
+        identify_vendor  (1st LLM API call)
         Sends document to Conversation API, polls for result, returns full TaskResponse.
         Mirrors: DynamicTemplateLLMParser.getInputFileText()
         """
-        self.logger.info(f"TOOL 2 — identify_vendor: file='{file_path}'")
+        self.logger.info(f"identify_vendor: file='{file_path}'")
         task_response = None
         try:
             task_detail = self._send_conversation_api_request(file_path)
@@ -407,14 +406,14 @@ class DynamicTemplateLLMParser:
         task_response.status = FileExecutionStatus.waiting.value
         return task_response
 
-    # ── TOOL 3 — match_vendor_parser ────────────────────────────────────────
-    def tool3_match_vendor_parser(self, vendor_text: str) -> dict:
+    # ── match_vendor_parser ──────────────────────────────────────────────────
+    def match_vendor_parser(self, vendor_text: str) -> dict:
         """
-        TOOL 3: match_vendor_parser
+        match_vendor_parser
         Queries vendor reference table for a match, then fetches parser config.
         Mirrors: DynamicTemplateLLMParser.getVendorParserDetailIfMatchedInFile()
         """
-        self.logger.info(f"TOOL 3 — match_vendor_parser: vendor_text='{vendor_text}'")
+        self.logger.info(f"match_vendor_parser: vendor_text='{vendor_text}'")
         self.logger.info(f"self.config {self.config}")
         rows    = self._get_select_query_results(f"SELECT * FROM {self.config.templateReferenceDBTable}")
         ref_col = self.config.templateReferenceDBColumn
@@ -452,15 +451,15 @@ class DynamicTemplateLLMParser:
         return {"vendor_match": matched_vendor, "parser_id": parser_id,
                 "config_class": config_class, "parser_type": parser_type}
 
-    # ── TOOL 5 — update_execution_status ────────────────────────────────────
-    def tool5_update_execution_status(self, file_path: str, status: FileExecutionStatus) -> None:
+    # ── update_execution_status ──────────────────────────────────────────────
+    def update_execution_status(self, file_path: str, status: FileExecutionStatus) -> None:
         """
-        TOOL 5: update_execution_status  (always runs — mirrors Java finally block)
+        update_execution_status  (always runs — mirrors Java finally block)
         1. Writes status row to DB.
         2. Moves file to configured directory.
         3. Closes DB + flushes log handlers.
         """
-        self.logger.info(f"TOOL 5 — update_execution_status: status={status}  file='{file_path}'")
+        self.logger.info(f"update_execution_status: status={status}  file='{file_path}'")
         self._update_file_status(file_path, status)
         if status in (FileExecutionStatus.Completed, FileExecutionStatus.Failed, FileExecutionStatus.Unapproved):
             self._move_file_based_on_status(file_path, status)
@@ -531,7 +530,7 @@ class DynamicTemplateLLMParser:
 
     # ── Orchestration ────────────────────────────────────────────────────────
     def _execute_matched_parser(self, source_path: str) -> None:
-        validation = self.tool1_validate_input(self.config_file_path, source_path)
+        validation = self.validate_input(self.config_file_path, source_path)
         if validation["error"]:
             self.logger.info(f"Validation error: {validation['error']}")
             self._result_summary["error"] = validation["error"]  # REPORTING ONLY
@@ -543,7 +542,7 @@ class DynamicTemplateLLMParser:
         """
         Mirrors the updated Java executeMatchedParser() logic.
 
-        1. tool2_identify_vendor() returns a TaskResponse (or None).
+        1. identify_vendor() returns a TaskResponse (or None).
         2. None response          → Failed  (move file)
         3. isFailed() response    → Failed  (move file)
         4. isFulfilled() response → extract text, continue
@@ -557,15 +556,15 @@ class DynamicTemplateLLMParser:
         _file_entry = self._make_file_entry(file_path)
         _file_start_ms = time.time() * 1000
 
-        # ── Step 1: Call Conversation API (Tool 2) ───────────────────────────
-        task_response = self.tool2_identify_vendor(file_path)
+        # ── Step 1: Call Conversation API (identify_vendor) ──────────────────
+        task_response = self.identify_vendor(file_path)
 
         # REPORTING ONLY — capture conversation trace id
         _file_entry["conversation_trace_id"] = self.execution_data.conversationTraceId
 
         if task_response is None:
             self.logger.info("Conversation API returned None response — marking Failed.")
-            self.tool5_update_execution_status(file_path, FileExecutionStatus.Failed)
+            self.update_execution_status(file_path, FileExecutionStatus.Failed)
             # REPORTING ONLY
             _file_entry["status"] = str(FileExecutionStatus.Failed)
             _file_entry["error_message"] = "Conversation API returned None response"
@@ -577,7 +576,7 @@ class DynamicTemplateLLMParser:
 
         if task_response.is_failed():
             self.logger.info("Parser execution stopped because conversation API failed.")
-            self.tool5_update_execution_status(file_path, FileExecutionStatus.Failed)
+            self.update_execution_status(file_path, FileExecutionStatus.Failed)
             # REPORTING ONLY
             _file_entry["status"] = str(FileExecutionStatus.Failed)
             _file_entry["error_message"] = "Conversation API reported failure"
@@ -594,7 +593,7 @@ class DynamicTemplateLLMParser:
 
         if not file_text:
             self.logger.info("Conversation API didn't provide matching text — marking Waiting.")
-            self.tool5_update_execution_status(file_path, FileExecutionStatus.Waiting)
+            self.update_execution_status(file_path, FileExecutionStatus.Waiting)
             # REPORTING ONLY
             _file_entry["status"] = str(FileExecutionStatus.Waiting)
             _file_entry["error_message"] = "Conversation API returned no vendor text"
@@ -602,8 +601,8 @@ class DynamicTemplateLLMParser:
             self._result_summary["files"].append(_file_entry)
             return
 
-        # ── Step 2: Match vendor (Tool 3) ────────────────────────────────────
-        match_result = self.tool3_match_vendor_parser(file_text)
+        # ── Step 2: Match vendor (match_vendor_parser) ───────────────────────
+        match_result = self.match_vendor_parser(file_text)
 
         # REPORTING ONLY — capture match details
         _file_entry["matched_vendor"]    = match_result.get("vendor_match") and \
@@ -612,7 +611,7 @@ class DynamicTemplateLLMParser:
 
         if not match_result.get("vendor_match"):
             self.logger.info("No vendor match — marking Unapproved.")
-            self.tool5_update_execution_status(file_path, FileExecutionStatus.Unapproved)
+            self.update_execution_status(file_path, FileExecutionStatus.Unapproved)
             # REPORTING ONLY
             _file_entry["status"] = str(FileExecutionStatus.Unapproved)
             _file_entry["error_message"] = "No matching vendor template found"
@@ -622,7 +621,7 @@ class DynamicTemplateLLMParser:
 
         if not match_result.get("config_class"):
             self.execution_data.errorMessage = "Parser not found in parser_config table."
-            self.tool5_update_execution_status(file_path, FileExecutionStatus.Failed)
+            self.update_execution_status(file_path, FileExecutionStatus.Failed)
             # REPORTING ONLY
             _file_entry["status"] = str(FileExecutionStatus.Failed)
             _file_entry["error_message"] = self.execution_data.errorMessage
@@ -630,7 +629,7 @@ class DynamicTemplateLLMParser:
             self._result_summary["files"].append(_file_entry)
             return
 
-        # ── Step 3: Invoke matched parser (Tool 4) ───────────────────────────
+        # ── Step 3: Invoke matched parser (_invoke_llm_parser) ───────────────
         result = self._invoke_llm_parser(
             parser_id=match_result["parser_id"],
             config_class=match_result["config_class"],
@@ -642,7 +641,7 @@ class DynamicTemplateLLMParser:
 
         status_map = {0: FileExecutionStatus.Completed, 2: FileExecutionStatus.Waiting}
         final_status = status_map.get(result, FileExecutionStatus.Failed)
-        self.tool5_update_execution_status(file_path, final_status)
+        self.update_execution_status(file_path, final_status)
 
         # REPORTING ONLY — finalise file entry
         _file_entry["status"] = str(final_status)
@@ -659,7 +658,7 @@ class DynamicTemplateLLMParser:
         self._result_summary["files"].append(_file_entry)
 
     def _invoke_llm_parser(self, parser_id: str, config_class: str, file_path: str) -> int:
-        """TOOL 4 bridge — mirrors Class.forName() reflection in Java."""
+        """_invoke_llm_parser bridge — mirrors Class.forName() reflection in Java."""
         self.logger.info(f"Invoking — class='{config_class}'  parser_id='{parser_id}'")
 
         JAVA_TO_PYTHON_CLASS_MAP = {
