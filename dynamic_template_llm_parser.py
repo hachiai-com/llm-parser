@@ -435,8 +435,8 @@ class DynamicTemplateLLMParser:
 
         query = (
             "SELECT pc.id, pc.org_id, pc.parser_type, pct.bash_file, pct.config_class "
-            "FROM parser_config pc "
-            "LEFT JOIN parser_config_type pct ON pc.parser_type = pct.parser_type "
+            "FROM uxploreaudit.parser_config pc "
+            "LEFT JOIN uxploreaudit.parser_config_type pct ON pc.parser_type = pct.parser_type "
             f"WHERE pc.id = {parser_id};"
         )
         config_rows = self._get_select_query_results_via_parent_account(query)

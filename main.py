@@ -36,11 +36,24 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
             fatal_error = summary.get("error")   # set only on validation/fatal failures
 
             if fatal_error:
-                top_status  = "error"
-                top_message = f"Execution failed before processing: {fatal_error}"
+                return {
+                    "error": f"Execution failed before processing: {fatal_error}",
+                    "capability": capability,
+                }
             elif not files:
-                top_status  = "no_files_processed"
-                top_message = "No supported files found to process."
+                return {
+                    "error": "No supported files found to process.",
+                    "capability": capability,
+                }
+            elif all(f.get("status") != "Completed" for f in files):
+                first_error = next(
+                    (f.get("error_message") for f in files if f.get("error_message")),
+                    "All files failed — see 'files' for per-file details."
+                )
+                return {
+                    "error": first_error,
+                    "capability": capability,
+                }
             elif all(f.get("status") == "Completed" for f in files):
                 top_status  = "success"
                 top_message = (
@@ -53,14 +66,6 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                     f"{completed} of {len(files)} file(s) completed; "
                     f"see 'files' for per-file details."
                 )
-            else:
-                # All files failed / waiting / unapproved — surface the first error
-                first_error = next(
-                    (f.get("error_message") for f in files if f.get("error_message")),
-                    "All files failed — see 'files' for per-file details."
-                )
-                top_status  = "failed"
-                top_message = first_error
 
             # ── Collect every distinct error from failed files ───────────────────
             # Gives the caller a flat list without having to walk the files array
@@ -136,6 +141,10 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                     or summary.get("message")
                     or f"Parser failed with exit code {result_code}."
                 )
+                return {
+                    "error": message,
+                    "capability": capability,
+                }
     
             return {
                 "result": {
