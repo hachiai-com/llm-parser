@@ -519,14 +519,47 @@ class DynamicTemplateLLMParser:
             FileExecutionStatus.Failed:     self.config.moveFailedFiles,
             FileExecutionStatus.Unapproved: self.config.moveUnapprovedFiles,
         }.get(status)
+        
         if not target_dir:
             return
-        os.makedirs(target_dir, exist_ok=True)
+        
+        # ── FIX 1: Normalize path separators for the current OS ──────────────
+        # Configs written on Linux/Mac may contain forward-slash paths like
+        # /Users/MuhammadRazi which are invalid on Windows. Convert them.
+        target_dir = os.path.normpath(target_dir)
+
+        # ── FIX 2: Warn and skip if the path looks like a foreign-OS absolute path
+        # e.g. "/Users/..." on Windows — normpath turns it into "\Users\..." which
+        # still won't be writable. Detect and bail out gracefully.
+        if os.name == "nt" and target_dir.startswith("\\") and not target_dir.startswith("\\\\"):
+            self.logger.warning(
+                f"Move target '{target_dir}' looks like a Unix absolute path on Windows — skipping file move. "
+                f"Please update your config to use a valid Windows path (e.g. C:\\Users\\MuhammadRazi\\completed)."
+            )
+            return
+
         try:
-            shutil.move(file_path, os.path.join(target_dir, os.path.basename(file_path)))
-            self.logger.info(f"File moved to: {target_dir}")
+            os.makedirs(target_dir, exist_ok=True)
+        except PermissionError as ex:
+            self.logger.warning(
+                f"Cannot create move directory '{target_dir}' (permission denied) — "
+                f"skipping file move. Original file remains at '{file_path}'. Error: {ex}"
+            )
+            return
+        except OSError as ex:
+            self.logger.warning(
+                f"Cannot create move directory '{target_dir}' — "
+                f"skipping file move. Original file remains at '{file_path}'. Error: {ex}"
+            )
+            return
+
+        try:
+            dest = os.path.join(target_dir, os.path.basename(file_path))
+            shutil.move(file_path, dest)
+            self.logger.info(f"File moved to: {dest}")
         except Exception as ex:
-            self.logger.error(f"Error moving file: {ex}", exc_info=True)
+            self.logger.error(f"Error moving file '{file_path}' → '{target_dir}': {ex}", exc_info=True)
+
 
     # ── Orchestration ────────────────────────────────────────────────────────
     def _execute_matched_parser(self, source_path: str) -> None:
