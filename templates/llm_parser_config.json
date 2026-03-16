@@ -1,0 +1,11 @@
+{
+    "id":"7842",
+    "sql":"mysql",
+    "sqlUrl":"jdbc:mysql://localhost:3306/client", 
+    "userName":"root",
+    "password":"",
+    "database":"client",
+    "table":"orders_raw",
+    "llmPromptDatabaseTable":"llm_parser_prompt",
+    "show_query":false
+}

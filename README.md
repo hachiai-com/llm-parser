@@ -90,6 +90,9 @@ Identifies the appropriate parser template from the database based on document c
 }
 ```
 
+> **Using a config file instead of a numeric ID?**
+> See [`templates/dynamic_template_llm_parser_config.json`](./templates/dynamic_template_llm_parser_config.json) for the full reference structure of the config file.
+
 **Success Response:**
 ```json
 {
@@ -129,7 +132,7 @@ Parses documents using a specific, pre-defined LLM template parser configuration
 **Required Parameters:**
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| `config` | string | Numeric parser ID (e.g., "123") |
+| `config` | string | Numeric parser ID (e.g., "123") or path to a config JSON file |
 | `source` | string | Path to the specific file or directory to be parsed |
 | `env_file` | string | Full path to the `.env` file containing credentials for this client |
 
@@ -144,6 +147,9 @@ Parses documents using a specific, pre-defined LLM template parser configuration
   }
 }
 ```
+
+> **Using a config file instead of a numeric ID?**
+> See [`templates/llm_parser_config.json`](./templates/llm_parser_config.json) for the full reference structure of the config file.
 
 **Success Response:**
 ```json
@@ -184,26 +190,24 @@ python llm_parser.py --config 123 --source ./docs/invoice_001.pdf
 
 ---
 
+## Config File Templates
+
+If you prefer to pass a config JSON file path instead of a numeric parser ID, reference templates are provided in the [`templates/`](./templates/) folder:
+
+| File | Used With |
+| :--- | :--- |
+| [`templates/llm_parser_config.json`](./templates/llm_parser_config.json) | `llm_parser` capability |
+| [`templates/dynamic_template_llm_parser_config.json`](./templates/dynamic_template_llm_parser_config.json) | `dynamic_template_llm_parser` capability |
+
+These files document every supported field and its expected value. Copy the relevant file, fill in your values, and pass its path as the `config` argument.
+
+---
+
 ## Configuration
 
 ### Environment File (`env_file`)
 
 Every call to the toolkit requires an `env_file` parameter pointing to a `.env` file. This allows different clients or environments to use their own credentials without any code changes.
-
-**Multi-client example:**
-```
-/projects/
-  client_a/
-    .env        ← client A's DB and API credentials
-  client_b/
-    .env        ← client B's DB and API credentials
-```
-
-You can then call the same toolkit with different `env_file` paths per client:
-```json
-{ "args": { "env_file": "/projects/client_a/.env", ... } }
-{ "args": { "env_file": "/projects/client_b/.env", ... } }
-```
 
 ### Required Variables
 

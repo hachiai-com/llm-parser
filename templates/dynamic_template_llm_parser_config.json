@@ -1,0 +1,18 @@
+{
+  "id": "7841",
+  "sql": "mysql",
+  "sqlUrl": "jdbc:mysql://localhost:3306/client",
+  "userName": "root",
+  "password": "",
+  "database": "client",
+  "table": "Xsat_wanted_data",
+  "llmPromptDatabaseTable": "llm_parser_prompt",
+  "show_query": false,
+  "templateReferenceDBTable": "llm_template_list",
+  "templateReferenceDBColumn": "template_matching_text",
+  "fileNameColumn": "file_name",
+  "fileParsingStatusReferenceDBTable": "parser_files_execution_status",
+  "moveCompletedFiles": "/Users/client/Downloads/parser_samples/llm-samples/New Folder With Items/Completed/",
+  "moveFailedFiles": "/Users/client/Downloads/parser_samples/llm-samples/New Folder With Items/Failed/",
+  "moveUnapprovedFiles": "/Users/client/Downloads/parser_samples/llm-samples/New Folder With Items/Unapproved/"
+}
