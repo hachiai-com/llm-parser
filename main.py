@@ -6,6 +6,7 @@ import sys
 import time
 from datetime import datetime
 from typing import Dict, Any
+import os
 
 from dynamic_template_llm_parser import DynamicTemplateLLMParser
 from llm_parser import LLMParser
@@ -55,6 +56,26 @@ def checking_timeout(duration_minutes: float = None) -> Dict[str, Any]:
         "total_ticks": tick,
         "logs": logs,
         "summary": summary_message
+    }
+
+def checking_env(duration_minutes: float = None) -> Dict[str, Any]:
+    """
+    Prints all environment variables available to the process.
+    """
+
+    print("[checking_timeout] Listing environment variables:\n", flush=True)
+
+    env_vars = {}
+
+    for key, value in os.environ.items():
+        print(f"{key} = {value}", flush=True)
+        env_vars[key] = value
+
+    print(f"\nTotal environment variables found: {len(env_vars)}", flush=True)
+
+    return {
+        "total_env_variables": len(env_vars),
+        "environment_variables": env_vars
     }
 
 def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -255,6 +276,10 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
             return {"error": "Invalid value for duration_minutes. Must be a number."}
 
         result = checking_timeout(duration_minutes=duration)
+        return {"result": result, "capability": capability}
+    
+    elif capability == "checking_env":
+        result = checking_env()
         return {"result": result, "capability": capability}
 
     else:

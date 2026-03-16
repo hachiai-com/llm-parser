@@ -66,6 +66,15 @@
         },
         "required": []
       }
+    },
+    {
+      "name": "checking_env",
+      "description": "Use this for checking out environment variables present. It will list all the env variables that are accessable in the external toolkit.",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   ],
   "author": "HachiAI",
