@@ -7,6 +7,7 @@ from typing import Dict, Any
 
 from dynamic_template_llm_parser import DynamicTemplateLLMParser
 from llm_parser import LLMParser
+from config import load_env
 
 def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -20,10 +21,19 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     if capability == "dynamic_template_llm_parser":
         config = args.get("config")
         source = args.get("source")
+        env_file = args.get("env_file")
 
-        if not config or not source:
+        if not config or not source or not env_file:
             return {
-                "error": "Missing required arguments: 'config' and 'source' are required",
+                "error": "Missing required arguments: 'config', 'source', and 'env_file' are required",
+                "capability": capability,
+            }
+
+        try:
+            load_env(env_file)  # load client-specific env before anything else
+        except FileNotFoundError as e:
+            return {
+                "error": str(e),
                 "capability": capability,
             }
 
@@ -118,10 +128,19 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     elif capability == "llm_parser":
         config = args.get("config")
         source = args.get("source")
-    
-        if not config or not source:
+        env_file = args.get("env_file")
+
+        if not config or not source or not env_file:
             return {
-                "error": "Missing required arguments: 'config' and 'source' are required",
+                "error": "Missing required arguments: 'config', 'source', and 'env_file' are required",
+                "capability": capability,
+            }
+
+        try:
+            load_env(env_file)  # load client-specific env before anything else
+        except FileNotFoundError as e:
+            return {
+                "error": str(e),
                 "capability": capability,
             }
     

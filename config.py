@@ -137,3 +137,15 @@ class MultiInvoiceConfig:
     prompt         = lambda: cfg("HACHIAI_LLM_MULTI_INVOICE_PROMPT", "")
     folder         = lambda: cfg("HACHIAI_LLM_MULTI_INVOICE_FOLDER", "")
     page_threshold = lambda: cfg_int("HACHIAI_LLM_MULTI_INVOICE_PAGE_THRESHOLD", 1)
+
+def load_env(env_file_path: str) -> None:
+    """
+    Load a specific .env file, overriding any already-loaded values.
+    Called from handle_request when a client provides their own env_file path.
+    
+    Args:
+        env_file_path: Absolute or relative path to the client's .env file.
+    """
+    if not os.path.isfile(env_file_path):
+        raise FileNotFoundError(f".env file not found: '{env_file_path}'")
+    load_dotenv(env_file_path, override=True)

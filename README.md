@@ -11,6 +11,8 @@ A powerful, LLM-driven toolkit designed for automated data extraction from compl
 - **Asynchronous Processing**: Handles long-running LLM tasks with an efficient polling mechanism.
 - **Detailed Traceability**: Generates unique execution IDs and per-file status reports for full observability.
 
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -23,20 +25,22 @@ A powerful, LLM-driven toolkit designed for automated data extraction from compl
 
 1. Clone the repository.
 2. Install dependencies:
-   ```bash
+```bash
    pip install -r requirements.txt
-   ```
+```
 
 ### Setup
 
 1. **Create your environment file**:
    Copy `.env.example` to `.env`:
-   ```bash
+```bash
    cp .env.example .env
-   ```
+```
 
 2. **Configure Variables**:
    Update `.env` with your database credentials and **HACHIAI_LLM_TOKEN**. (See [Configuration](#configuration) for details).
+
+---
 
 ## How to Use
 
@@ -50,14 +54,15 @@ The toolkit accepts JSON input via standard input and returns JSON output. It is
   "capability": "capability_name",
   "args": {
     "config": "numeric_id_or_path",
-    "source": "path/to/file_or_directory"
+    "source": "path/to/file_or_directory",
+    "env_file": "path/to/.env"
   }
 }
 ```
 
 **Execution:**
 ```bash
-echo '{"capability": "llm_parser", "args": {"config": "123", "source": "docs/inv.pdf"}}' | python main.py
+echo '{"capability": "llm_parser", "args": {"config": "123", "source": "docs/inv.pdf", "env_file": "/path/to/.env"}}' | python main.py
 ```
 
 ---
@@ -67,8 +72,11 @@ echo '{"capability": "llm_parser", "args": {"config": "123", "source": "docs/inv
 Identifies the appropriate parser template from the database based on document content, then extracts information.
 
 **Required Parameters:**
-- `config` - Numeric parser ID or path to a config JSON file.
-- `source` - Full path to the source file or directory containing documents.
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `config` | string | Numeric parser ID or path to a config JSON file |
+| `source` | string | Full path to the source file or directory containing documents |
+| `env_file` | string | Full path to the `.env` file containing credentials for this client |
 
 **Example:**
 ```json
@@ -76,7 +84,8 @@ Identifies the appropriate parser template from the database based on document c
   "capability": "dynamic_template_llm_parser",
   "args": {
     "config": "234",
-    "source": "./invoices/january/"
+    "source": "./invoices/january/",
+    "env_file": "/path/to/client_a/.env"
   }
 }
 ```
@@ -103,6 +112,14 @@ Identifies the appropriate parser template from the database based on document c
 }
 ```
 
+**Error Response:**
+```json
+{
+  "error": "No supported files found to process.",
+  "capability": "dynamic_template_llm_parser"
+}
+```
+
 ---
 
 ### Capability 2: Specific LLM Parser
@@ -110,8 +127,11 @@ Identifies the appropriate parser template from the database based on document c
 Parses documents using a specific, pre-defined LLM template parser configuration.
 
 **Required Parameters:**
-- `config` - Numeric parser ID (e.g., "123").
-- `source` - Path to the specific file or directory to be parsed.
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `config` | string | Numeric parser ID (e.g., "123") |
+| `source` | string | Path to the specific file or directory to be parsed |
+| `env_file` | string | Full path to the `.env` file containing credentials for this client |
 
 **Example:**
 ```json
@@ -119,7 +139,8 @@ Parses documents using a specific, pre-defined LLM template parser configuration
   "capability": "llm_parser",
   "args": {
     "config": "123",
-    "source": "docs/specific_invoice.pdf"
+    "source": "docs/specific_invoice.pdf",
+    "env_file": "/path/to/client_a/.env"
   }
 }
 ```
@@ -140,10 +161,19 @@ Parses documents using a specific, pre-defined LLM template parser configuration
 }
 ```
 
+**Error Response:**
+```json
+{
+  "error": "Parser failed with exit code 1.",
+  "capability": "llm_parser"
+}
+```
+
+---
+
 ### Standalone CLI Execution
 
-The parsers can also be executed directly as Python scripts:
-
+The parsers can also be executed directly as Python scripts. In this case the `.env` file is loaded automatically from the working directory or script directory — no `env_file` argument is needed.
 ```bash
 # Run the Dynamic Parser
 python dynamic_template_llm_parser.py --config 234 --source ./invoices/
@@ -156,6 +186,27 @@ python llm_parser.py --config 123 --source ./docs/invoice_001.pdf
 
 ## Configuration
 
+### Environment File (`env_file`)
+
+Every call to the toolkit requires an `env_file` parameter pointing to a `.env` file. This allows different clients or environments to use their own credentials without any code changes.
+
+**Multi-client example:**
+```
+/projects/
+  client_a/
+    .env        ← client A's DB and API credentials
+  client_b/
+    .env        ← client B's DB and API credentials
+```
+
+You can then call the same toolkit with different `env_file` paths per client:
+```json
+{ "args": { "env_file": "/projects/client_a/.env", ... } }
+{ "args": { "env_file": "/projects/client_b/.env", ... } }
+```
+
+### Required Variables
+
 You must set these core variables in your `.env` file for the toolkit to function:
 
 | Variable | Description |
@@ -167,13 +218,19 @@ You must set these core variables in your `.env` file for the toolkit to functio
 | `HACHIAI_LLM_TOKEN` | **Mandatory**: Your HachiAI API security token |
 | `HACHIAI_LLM_API` | Base URL for the LLM extraction API |
 
+A full list of all supported variables with their defaults can be found in `.env.example`.
+
+---
+
 ## Example AI Agent Prompts
 
 ### Example 1: Batch Process a Folder
-`"Use the dynamic LLM parser with config 234 to process all files in the './uploads' directory."`
+`"Use Dynamic Template LLM Parser for parsing. Use source as 'D:/llm-learning', while config and environment files are attached."`
 
 ### Example 2: Parse a Specific File
-`"Extract data from 'inv_99.pdf' using the specific parser ID 123."`
+`"Extract data using LLM parser from 'inv_99.pdf' using the specific parser ID 123 and the env file at /projects/client_b/.env."`
+
+---
 
 ## Logging & Observability
 
@@ -182,11 +239,14 @@ Logs are stored in the `logs/` directory. Each execution tracks:
 - **Trace IDs**: `qna_trace_id` for individual LLM API calls.
 - **Status States**:
     - `Completed`: Successful extraction and DB insertion.
-    - `Unapproved`: Document content did not match the template.
-    - `Failed`: Template matched but extraction/DB insertion failed.
+    - `Unapproved`: Document content did not match any vendor template.
+    - `Failed`: Template matched but extraction or DB insertion failed.
+    - `Waiting`: LLM API did not return a result within the polling window.
+
+---
 
 ## Important Notes
 
+- **env_file is mandatory**: Every toolkit call must include a valid `env_file` path. If the file does not exist, the toolkit returns an error immediately before any processing begins.
 - **Database Dependency**: A valid MySQL connection is required to fetch templates and save results.
-- **Environment**: Ensure `.env` is created from `.env.example` before first run.
-- **Output**: The toolkit primary writes to the database; summary results are returned via JSON.
+- **Output**: The toolkit primarily writes to the database; summary results are returned via JSON.

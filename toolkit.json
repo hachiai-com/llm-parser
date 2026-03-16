@@ -22,9 +22,13 @@
           "source": {
             "type": "string",
             "description": "Absolute path to the source PDF, image file, or directory of files to parse."
+          },
+          "env_file": { 
+            "type": "string",
+            "description": "Path to the .env file for this client" 
           }
         },
-        "required": ["config", "source"]
+        "required": ["config", "source", "env_file"]
       }
     },
     {
@@ -40,9 +44,13 @@
           "source": {
             "type": "string",
             "description": "Absolute path to the source PDF, image file, or directory of files to parse."
+          },
+          "env_file": {
+            "type": "string",
+            "description": "Path to the .env file for this client"
           }
         },
-        "required": ["config", "source"]
+        "required": ["config", "source", "env_file"]
       }
     }
   ],
