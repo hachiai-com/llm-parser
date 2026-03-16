@@ -52,6 +52,20 @@
         },
         "required": ["config", "source", "env_file"]
       }
+    },
+    {
+      "name": "checking_timeout",
+      "description": "Use this for checking out the timeout. Loops and prints the current time at intervals. Runs for duration_minutes if provided, otherwise defaults to 2 minutes.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "duration_minutes": {
+            "type": "number",
+            "description": "How many minutes to run the loop. Leave empty or omit to default to 2 minutes."
+          }
+        },
+        "required": []
+      }
     }
   ],
   "author": "HachiAI",

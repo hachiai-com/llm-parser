@@ -3,11 +3,59 @@
 import json
 import logging
 import sys
+import time
+from datetime import datetime
 from typing import Dict, Any
 
 from dynamic_template_llm_parser import DynamicTemplateLLMParser
 from llm_parser import LLMParser
 from config import load_env
+
+def checking_timeout(duration_minutes: float = None) -> Dict[str, Any]:
+    """
+    Loops and prints the current time every 10 seconds for a given duration.
+    Defaults to 2 minutes if duration_minutes is not provided or empty.
+
+    Args:
+        duration_minutes: How long to run the loop (in minutes). Defaults to 2.
+
+    Returns:
+        A summary dict with total ticks and duration used.
+    """
+    # Default to 2 minutes if variable is empty/None
+    if not duration_minutes:
+        duration_minutes = 2
+
+    duration_seconds = duration_minutes * 60
+    interval_seconds = 10  # Print every 10 seconds
+    start_time = time.time()
+    tick = 0
+    logs = []
+
+    print(f"[checking_timeout] Starting loop for {duration_minutes} minute(s)...", flush=True)
+
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed >= duration_seconds:
+            break
+
+        tick += 1
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        message = f"[Tick {tick}] Current time: {current_time} | Elapsed: {elapsed:.1f}s / {duration_seconds}s"
+        print(message, flush=True)
+        logs.append(message)
+
+        time.sleep(interval_seconds)
+
+    summary_message = f"[checking_timeout] Done. Ran for {duration_minutes} minute(s), total ticks: {tick}"
+    print(summary_message, flush=True)
+
+    return {
+        "duration_minutes": duration_minutes,
+        "total_ticks": tick,
+        "logs": logs,
+        "summary": summary_message
+    }
 
 def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -197,6 +245,20 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "error": str(e),
                 "capability": capability,
             }
+    elif capability == "checking_timeout":
+        # duration_minutes is optional — empty/missing defaults to 2 mins
+        duration = args.get("duration_minutes", None)
+        try:
+            if duration is not None:
+                duration = float(duration)
+        except (ValueError, TypeError):
+            return {"error": "Invalid value for duration_minutes. Must be a number."}
+
+        result = checking_timeout(duration_minutes=duration)
+        return {"result": result, "capability": capability}
+
+    else:
+        return {"error": f"Unknown capability: {capability}"}
 
 def main():
     """Main entry point - reads JSON from stdin, outputs JSON to stdout"""
