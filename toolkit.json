@@ -79,5 +79,6 @@
   ],
   "author": "HachiAI",
   "homepage": "https://github.com/hachiai-com/llm-parser",
-  "tags": ["idms", "invoice", "llm-parser", "pdf", "data-extraction", "ocr", "document-processing"]
+  "tags": ["idms", "invoice", "llm-parser", "pdf", "data-extraction", "ocr", "document-processing"],
+  "env": {}
 }
