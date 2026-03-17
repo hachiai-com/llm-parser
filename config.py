@@ -131,14 +131,9 @@ class LLMConfig:
     )
 
 
-class MultiInvoiceConfig:
-    """Mirrors hachiai.llm.multiInvoice.* properties."""
-    skip           = lambda: cfg_bool("HACHIAI_LLM_MULTI_INVOICE_SKIP", False)
-    prompt         = lambda: cfg("HACHIAI_LLM_MULTI_INVOICE_PROMPT", "")
-    folder         = lambda: cfg("HACHIAI_LLM_MULTI_INVOICE_FOLDER", "")
-    page_threshold = lambda: cfg_int("HACHIAI_LLM_MULTI_INVOICE_PAGE_THRESHOLD", 1)
 
 def load_env(env_file_path: str) -> None:
+
     """
     Load a specific .env file, overriding any already-loaded values.
     Called from handle_request when a client provides their own env_file path.

@@ -2,7 +2,7 @@
 Python equivalent of DynamicTemplateLLMParser.java
 
 Main implemented:
-    - validate_input          : load config (from LLMConfigBean or DB using id), check file/dir, extension, multi-invoice skip
+    - validate_input          : load config (from LLMConfigBean or DB using id), check file/dir, extension
     - identify_vendor         : send doc to Conversation API, extract vendor text
     - match_vendor_parser     : match vendor text against DB, get parser class
     - update_execution_status : write status to DB, move files, cleanup
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 import requests
-from config import DBConfig, LLMConfig, MultiInvoiceConfig
+from config import DBConfig, LLMConfig
 from constants import MYSQL_DB, FileExecutionStatus, TaskExecutionStatus
 from logger import get_static_logger, get_instance_logger, close_instance_logger
 from sql_dao import SqlDao
@@ -34,37 +34,6 @@ from models.task_response import TaskResponse
 
 static_logger = get_static_logger("DynamicTemplateLLMParser")
 SUPPORTED_EXT_RE = re.compile(r"\.(pdf|png|jpg|jpeg)$", re.IGNORECASE)
-
-
-# class MultiInvoiceChecker:
-#     def __init__(self) -> None:
-#         self._threshold = MultiInvoiceConfig.page_threshold()
-#         static_logger.info(f"MultiInvoiceChecker — page threshold = {self._threshold}")
-
-#     def should_skip_file(self, file_path: str) -> bool:
-#         ext = os.path.splitext(file_path)[1].lower()
-#         if ext in (".png", ".jpg", ".jpeg"):
-#             return False
-#         if ext == ".pdf":
-#             return self._pdf_exceeds_threshold(file_path)
-#         return False
-
-#     def _pdf_exceeds_threshold(self, file_path: str) -> bool:
-#         try:
-#             from pypdf import PdfReader
-#         except ImportError:
-#             try:
-#                 from PyPDF2 import PdfReader
-#             except ImportError:
-#                 static_logger.warning("pypdf not installed — defaulting to NOT skip.")
-#                 return False
-#         try:
-#             reader = PdfReader(file_path)
-#             return len(reader.pages) > self._threshold
-#         except Exception as exc:
-#             static_logger.warning(f"Could not read PDF: {exc} — defaulting to NOT skip.")
-#             return False
-
 
 class DynamicTemplateLLMParser:
     """
@@ -175,7 +144,6 @@ class DynamicTemplateLLMParser:
         Step B — Source path validation:
             - Checks the file/directory exists.
             - Filters files by supported extensions (.pdf, .png, .jpg, .jpeg).
-            - Runs multi-invoice skip check (if enabled via env).
 
         Returns:
             {
@@ -224,8 +192,7 @@ class DynamicTemplateLLMParser:
         if is_directory and not candidate_paths:
             self.logger.info(f"No supported files found in directory: '{source_path}'")
 
-        # checker = MultiInvoiceChecker() if MultiInvoiceConfig.skip() else None
-        checker       = None
+
         valid_files   = []
         skipped_files = []
 
@@ -234,13 +201,6 @@ class DynamicTemplateLLMParser:
                 skipped_files.append({
                     "path": abs_path, "valid": False, "skip": False,
                     "reason": f"Unsupported extension: '{os.path.splitext(abs_path)[1]}'"
-                })
-                continue
-            if checker and checker.should_skip_file(abs_path):
-                self.logger.info(f"Skipping multi-page invoice: {abs_path}")
-                skipped_files.append({
-                    "path": abs_path, "valid": True, "skip": True,
-                    "reason": "Multi-invoice skip (HACHIAI_LLM_MULTI_INVOICE_SKIP=true)"
                 })
                 continue
             valid_files.append({"path": abs_path, "valid": True, "skip": False, "reason": ""})
@@ -843,23 +803,14 @@ if __name__ == "__main__":
     static_logger.info("DynamicTemplateLLMParser execution started")
     source  = args.source
     is_dir  = os.path.isdir(source)
-    # checker = MultiInvoiceChecker() if MultiInvoiceConfig.skip() else None
-    checker = None
-
     if is_dir:
         files = DynamicTemplateLLMParser._get_files_by_filter(source)
         if not files:
             static_logger.info(f"No files found in directory: {source}")
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() + 2) as executor:
             for f in files:
-                if checker and checker.should_skip_file(f):
-                    static_logger.info(f"Skipping multi-page invoice: {f}")
-                    continue
                 executor.submit(DynamicTemplateLLMParser(args.config, f).run)
     else:
-        if checker and checker.should_skip_file(source):
-            static_logger.info(f"Skipping multi-page invoice: {source}")
-            exit(0)
         DynamicTemplateLLMParser(args.config, source).run()
 
     static_logger.info("DynamicTemplateLLMParser execution end")
