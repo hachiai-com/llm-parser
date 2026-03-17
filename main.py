@@ -90,21 +90,21 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     if capability == "dynamic_template_llm_parser":
         config = args.get("config")
         source = args.get("source")
-        env_file = args.get("env_file")
+        # env_file = args.get("env_file")
 
-        if not config or not source or not env_file:
+        if not config or not source:
             return {
-                "error": "Missing required arguments: 'config', 'source', and 'env_file' are required",
+                "error": "Missing required arguments: 'config' and 'source' are required",
                 "capability": capability,
             }
 
-        try:
-            load_env(env_file)  # load client-specific env before anything else
-        except FileNotFoundError as e:
-            return {
-                "error": str(e),
-                "capability": capability,
-            }
+        # try:
+        #     load_env(env_file)  # load client-specific env before anything else
+        # except FileNotFoundError as e:
+        #     return {
+        #         "error": str(e),
+        #         "capability": capability,
+        #     }
 
         try:
             parser = DynamicTemplateLLMParser(config, source)
@@ -197,21 +197,21 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     elif capability == "llm_parser":
         config = args.get("config")
         source = args.get("source")
-        env_file = args.get("env_file")
+        # env_file = args.get("env_file")
 
-        if not config or not source or not env_file:
+        if not config or not source:
             return {
-                "error": "Missing required arguments: 'config', 'source', and 'env_file' are required",
+                "error": "Missing required arguments: 'config' and 'source' are required",
                 "capability": capability,
             }
 
-        try:
-            load_env(env_file)  # load client-specific env before anything else
-        except FileNotFoundError as e:
-            return {
-                "error": str(e),
-                "capability": capability,
-            }
+        # try:
+        #     load_env(env_file)  # load client-specific env before anything else
+        # except FileNotFoundError as e:
+        #     return {
+        #         "error": str(e),
+        #         "capability": capability,
+        #     }
     
         try:
             parser  = LLMParser(config, source)

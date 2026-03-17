@@ -29,15 +29,15 @@ from dotenv import load_dotenv, find_dotenv
 # ---------------------------------------------------------------------------
 # find_dotenv() walks up from CWD until it finds a .env file —
 # mirrors Java's classpath / root-path fallback in readAppProperties()
-_env_path = find_dotenv(usecwd=True)
-if _env_path:
-    load_dotenv(_env_path, override=False)
-else:
-    # Fallback: try script directory
-    _script_dir = os.path.dirname(os.path.abspath(__file__))
-    _fallback   = os.path.join(_script_dir, ".env")
-    if os.path.isfile(_fallback):
-        load_dotenv(_fallback, override=False)
+# _env_path = find_dotenv(usecwd=True)
+# if _env_path:
+#     load_dotenv(_env_path, override=False)
+# else:
+#     # Fallback: try script directory
+#     _script_dir = os.path.dirname(os.path.abspath(__file__))
+#     _fallback   = os.path.join(_script_dir, ".env")
+#     if os.path.isfile(_fallback):
+#         load_dotenv(_fallback, override=False)
 
 
 def cfg(key: str, default: Optional[str] = None) -> Optional[str]:
@@ -132,15 +132,15 @@ class LLMConfig:
 
 
 
-def load_env(env_file_path: str) -> None:
+# def load_env(env_file_path: str) -> None:
 
-    """
-    Load a specific .env file, overriding any already-loaded values.
-    Called from handle_request when a client provides their own env_file path.
+#     """
+#     Load a specific .env file, overriding any already-loaded values.
+#     Called from handle_request when a client provides their own env_file path.
     
-    Args:
-        env_file_path: Absolute or relative path to the client's .env file.
-    """
-    if not os.path.isfile(env_file_path):
-        raise FileNotFoundError(f".env file not found: '{env_file_path}'")
-    load_dotenv(env_file_path, override=True)
+#     Args:
+#         env_file_path: Absolute or relative path to the client's .env file.
+#     """
+#     if not os.path.isfile(env_file_path):
+#         raise FileNotFoundError(f".env file not found: '{env_file_path}'")
+#     load_dotenv(env_file_path, override=True)

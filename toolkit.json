@@ -22,13 +22,9 @@
           "source": {
             "type": "string",
             "description": "Absolute path to the source PDF, image file, or directory of files to parse."
-          },
-          "env_file": { 
-            "type": "string",
-            "description": "Path to the .env file for this client" 
           }
         },
-        "required": ["config", "source", "env_file"]
+        "required": ["config", "source"]
       }
     },
     {
@@ -44,13 +40,9 @@
           "source": {
             "type": "string",
             "description": "Absolute path to the source PDF, image file, or directory of files to parse."
-          },
-          "env_file": {
-            "type": "string",
-            "description": "Path to the .env file for this client"
           }
         },
-        "required": ["config", "source", "env_file"]
+        "required": ["config", "source"]
       }
     },
     {
@@ -79,6 +71,6 @@
   ],
   "author": "HachiAI",
   "homepage": "https://github.com/hachiai-com/llm-parser",
-  "tags": ["idms", "invoice", "llm-parser", "pdf", "data-extraction", "ocr", "document-processing"],
+  "tags": ["idms", "invoice", "llm-parser","dynamic_template_llm_parser", "pdf", "data-extraction", "ocr", "document-processing"],
   "env": {}
 }
