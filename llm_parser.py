@@ -38,6 +38,7 @@ from models.task_response import TaskResponse
 from models.db_column_mapping_bean import DBColumnMappingBean
 from models.config_file_bean import ConfigFileBean
 from constants import MSSQL_DB, MYSQL_DB
+import re
 
 # Static logger
 static_logger = get_static_logger("LLMParser")
@@ -828,34 +829,86 @@ class LLMParser:
             self.dao.close()
             self.dao = None
 
+    @staticmethod
+    def _start_processing(config: str, source: str) -> list:
+        """
+        Single authoritative entry point for directory fan-out and thread pool.
+        Called by both __main__ (CLI) and handle_request (main file).
+        Mirrors Java LLMParser.startProcessing().
+
+        Always creates one instance per file — processFile is always
+        single-file only, directory expansion never happens inside an instance.
+
+        Returns list of _result_summary dicts, one per file processed.
+        """
+        import concurrent.futures
+
+        supported = re.compile(r"\.(pdf|png|jpg|jpeg)$", re.IGNORECASE)
+
+        if os.path.isdir(source):
+            files = [
+                os.path.abspath(os.path.join(source, f))
+                for f in os.listdir(source)
+                if supported.search(f) and os.path.isfile(os.path.join(source, f))
+            ]
+        else:
+            files = [os.path.abspath(source)]
+
+        if not files:
+            static_logger.info(f"No supported files found in: '{source}'")
+            return []
+
+        summaries = []
+
+        if len(files) == 1:
+            summaries = [LLMParser(config, files[0]).process_file(config, files[0])]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=os.cpu_count() + 2
+            ) as executor:
+                future_map = {
+                    executor.submit(
+                        LLMParser(config, f).process_file, config, f
+                    ): f
+                    for f in files
+                }
+                for future in concurrent.futures.as_completed(future_map):
+                    summaries.append(future.result())
+
+        # ── CLI summary log ───────────────────────────────────────────────────
+        completed = sum(1 for s in summaries if s.get("status") == "success")
+        failed    = sum(1 for s in summaries if s.get("status") == "failed")
+        waiting   = sum(1 for s in summaries if s.get("status") == "waiting")
+
+        static_logger.info("─── Execution Summary ───────────────────────────────")
+        static_logger.info(f"  Source    : {source}")
+        static_logger.info(f"  Total     : {len(summaries)}")
+        static_logger.info(f"  Completed : {completed}")
+        static_logger.info(f"  Failed    : {failed}")
+        static_logger.info(f"  Waiting   : {waiting}")
+        static_logger.info("─────────────────────────────────────────────────────")
+        for s in summaries:
+            status = s.get("status", "unknown")
+            source_ = s.get("source", "unknown")
+            err    = s.get("error", "")
+            line   = f"  [{status}] {os.path.basename(source_)}"
+            if err:
+                line += f" — {err}"
+            static_logger.info(line)
+
+        return summaries
 
 # ===========================================================================
 # CLI entry point  (mirrors LLMParser.main())
 # ===========================================================================
 if __name__ == "__main__":
     import argparse
-    import concurrent.futures
-    import re
 
     ap = argparse.ArgumentParser(description="LLMParser")
     ap.add_argument("--config", required=True)
     ap.add_argument("--source", required=True)
     args = ap.parse_args()
 
-    source = args.source
-    is_dir = os.path.isdir(source)
-
-    supported = re.compile(r"\.(pdf|png|jpg|jpeg)$", re.IGNORECASE)
-
-    if is_dir:
-        files = [
-            os.path.abspath(os.path.join(source, f))
-            for f in os.listdir(source)
-            if supported.search(f) and os.path.isfile(os.path.join(source, f))
-        ]
-        max_workers = os.cpu_count() + 2
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for f in files:
-                executor.submit(LLMParser(args.config, f).run)
-    else:
-        LLMParser(args.config, source).run()
+    static_logger.info("LLMParser execution started")
+    LLMParser._start_processing(args.config, args.source)
+    static_logger.info("LLMParser execution end")

@@ -2,7 +2,6 @@
 Python equivalent of DynamicTemplateLLMParser.java
 
 Main implemented:
-    - validate_input          : load config (from LLMConfigBean or DB using id), check file/dir, extension
     - identify_vendor         : send doc to Conversation API, extract vendor text
     - match_vendor_parser     : match vendor text against DB, get parser class
     - update_execution_status : write status to DB, move files, cleanup
@@ -21,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 import requests
+import concurrent.futures
 from config import DBConfig, LLMConfig
 from constants import MYSQL_DB, FileExecutionStatus, TaskExecutionStatus
 from logger import get_static_logger, get_instance_logger, close_instance_logger
@@ -130,95 +130,6 @@ class DynamicTemplateLLMParser:
                 self._destroy()
             self._finalize_result_summary()  # REPORTING ONLY
         return self._result_summary  # REPORTING ONLY
-
-    # ── validate_input ──────────────────────────────────────────────────────
-    def validate_input(self, config_input: str, source_path: str) -> dict:
-        """
-        validate_input:
-        Step A — Config resolution:
-            - If `config_input` is an LLMConfigBean instance, use it directly.
-            - If `config_input` is a path to a JSON file, load it from disk.
-            - If `config_input` is a numeric string (parser id), fetch config from DB.
-            Sets self.config and opens self.dao on success.
-
-        Step B — Source path validation:
-            - Checks the file/directory exists.
-            - Filters files by supported extensions (.pdf, .png, .jpg, .jpeg).
-
-        Returns:
-            {
-                "config_loaded": bool,
-                "source_type":   "file" | "directory" | "unknown",
-                "valid_files":   [ {"path": str, "valid": bool, "skip": bool, "reason": str} ],
-                "skipped_files": [...],
-                "error":         str | None
-            }
-        """
-        self.logger.info(f"validate_input: config='{config_input}'  source='{source_path}'")
-
-        # ── Step A: Resolve & load config ────────────────────────────────────
-        config_error = self._resolve_config(config_input)
-        if config_error:
-            return {
-                "config_loaded": False,
-                "source_type": "unknown",
-                "valid_files": [],
-                "skipped_files": [],
-                "error": config_error,
-            }
-
-        self._load_db()
-        self.logger.info("DB connection established.")
-
-        # ── Step B: Validate source path ─────────────────────────────────────
-        if not os.path.exists(source_path):
-            msg = f"Source path does not exist: '{source_path}'"
-            self.logger.error(msg)
-            return {
-                "config_loaded": True,
-                "source_type": "unknown",
-                "valid_files": [],
-                "skipped_files": [],
-                "error": msg,
-            }
-
-        is_directory    = os.path.isdir(source_path)
-        source_type     = "directory" if is_directory else "file"
-        candidate_paths = (
-            DynamicTemplateLLMParser._get_files_by_filter(source_path)
-            if is_directory else [os.path.abspath(source_path)]
-        )
-
-        if is_directory and not candidate_paths:
-            self.logger.info(f"No supported files found in directory: '{source_path}'")
-
-
-        valid_files   = []
-        skipped_files = []
-
-        for abs_path in candidate_paths:
-            if not SUPPORTED_EXT_RE.search(abs_path):
-                skipped_files.append({
-                    "path": abs_path, "valid": False, "skip": False,
-                    "reason": f"Unsupported extension: '{os.path.splitext(abs_path)[1]}'"
-                })
-                continue
-            valid_files.append({"path": abs_path, "valid": True, "skip": False, "reason": ""})
-
-        # REPORTING ONLY — record totals so callers can display them
-        self._result_summary["total_files"]   = len(valid_files)
-        self._result_summary["skipped_files"] = len(skipped_files)
-
-        self.logger.info(
-            f"validate_input complete — config_loaded=True  valid={len(valid_files)}  skipped={len(skipped_files)}"
-        )
-        return {
-            "config_loaded": True,
-            "source_type": source_type,
-            "valid_files": valid_files,
-            "skipped_files": skipped_files,
-            "error": None,
-        }
 
     def _resolve_config(self, config_input) -> Optional[str]:
         """
@@ -474,39 +385,19 @@ class DynamicTemplateLLMParser:
         if not os.path.exists(file_path):
             self.logger.info(f"File not found for move: '{file_path}'")
             return
+
         target_dir = {
             FileExecutionStatus.Completed:  self.config.moveCompletedFiles,
             FileExecutionStatus.Failed:     self.config.moveFailedFiles,
             FileExecutionStatus.Unapproved: self.config.moveUnapprovedFiles,
         }.get(status)
-        
-        if not target_dir:
-            return
-        
-        # ── FIX 1: Normalize path separators for the current OS ──────────────
-        # Configs written on Linux/Mac may contain forward-slash paths like
-        # /Users/MuhammadRazi which are invalid on Windows. Convert them.
-        target_dir = os.path.normpath(target_dir)
 
-        # ── FIX 2: Warn and skip if the path looks like a foreign-OS absolute path
-        # e.g. "/Users/..." on Windows — normpath turns it into "\Users\..." which
-        # still won't be writable. Detect and bail out gracefully.
-        if os.name == "nt" and target_dir.startswith("\\") and not target_dir.startswith("\\\\"):
-            self.logger.warning(
-                f"Move target '{target_dir}' looks like a Unix absolute path on Windows — skipping file move. "
-                f"Please update your config to use a valid Windows path (e.g. C:\\Users\\MuhammadRazi\\completed)."
-            )
+        if not target_dir:
             return
 
         try:
             os.makedirs(target_dir, exist_ok=True)
-        except PermissionError as ex:
-            self.logger.warning(
-                f"Cannot create move directory '{target_dir}' (permission denied) — "
-                f"skipping file move. Original file remains at '{file_path}'. Error: {ex}"
-            )
-            return
-        except OSError as ex:
+        except Exception as ex:
             self.logger.warning(
                 f"Cannot create move directory '{target_dir}' — "
                 f"skipping file move. Original file remains at '{file_path}'. Error: {ex}"
@@ -518,18 +409,30 @@ class DynamicTemplateLLMParser:
             shutil.move(file_path, dest)
             self.logger.info(f"File moved to: {dest}")
         except Exception as ex:
-            self.logger.error(f"Error moving file '{file_path}' → '{target_dir}': {ex}", exc_info=True)
-
+            self.logger.error(
+                f"Error moving file '{file_path}' → '{target_dir}': {ex}", exc_info=True
+            )
 
     # ── Orchestration ────────────────────────────────────────────────────────
     def _execute_matched_parser(self, source_path: str) -> None:
-        validation = self.validate_input(self.config_file_path, source_path)
-        if validation["error"]:
-            self.logger.info(f"Validation error: {validation['error']}")
-            self._result_summary["error"] = validation["error"]  # REPORTING ONLY
+        """
+        Mirrors Java executeMatchedParser().
+        Config and DB are loaded here — source_path is always a single
+        file path, guaranteed by _start_processing().
+        """
+        # ── Load config ───────────────────────────────────────────────────────
+        config_error = self._resolve_config(self.config_file_path)
+        if config_error:
+            self.logger.error(f"Config error: {config_error}")
+            self._result_summary["error"] = config_error
             return
-        for file_entry in validation["valid_files"]:
-            self._process_single_file(file_entry["path"])
+
+        # ── Open DB connection (closed in run()'s finally via _destroy()) ─────
+        self._load_db()
+        self.logger.info("DB connection established.")
+
+        # ── Process the single file ───────────────────────────────────────────
+        self._process_single_file(source_path)
 
     def _process_single_file(self, file_path: str) -> None:
         """
@@ -786,6 +689,74 @@ class DynamicTemplateLLMParser:
             pid = str(1000 + random.randint(0, 31768)) + str(int(time.time() * 1000) % 100000)
             os.environ["LLM_PARSER_PARSER_EXECUTION_ID"] = pid
         return pid
+    
+    @staticmethod
+    def _start_processing(config: str, source: str) -> list:
+        """
+        Single authoritative entry point for directory fan-out and thread pool.
+        Called by both __main__ (CLI) and handle_request (main file).
+        Mirrors Java DynamicTemplateLLMParser.startProcessing().
+
+        Always creates one instance per file — directory expansion never
+        happens inside a parser instance (see _execute_matched_parser).
+
+        Returns list of _result_summary dicts, one per file processed.
+        """
+        files = (
+            DynamicTemplateLLMParser._get_files_by_filter(source)
+            if os.path.isdir(source)
+            else [os.path.abspath(source)]
+        )
+
+        if not files:
+            static_logger.info(f"No supported files found in: '{source}'")
+            return []
+
+        summaries = []
+
+        if len(files) == 1:
+            summaries = [DynamicTemplateLLMParser(config, files[0]).run()]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=os.cpu_count() + 2
+            ) as executor:
+                future_map = {
+                    executor.submit(DynamicTemplateLLMParser(config, f).run): f
+                    for f in files
+                }
+                for future in concurrent.futures.as_completed(future_map):
+                    try:
+                        summaries.append(future.result())
+                    except Exception as ex:
+                        static_logger.error(f"File processing error: {ex}", exc_info=True)
+
+        # ── CLI summary log ───────────────────────────────────────────────────
+        all_files  = [fe for s in summaries for fe in s.get("files", [])]
+        completed  = sum(1 for f in all_files if f.get("status") == "Completed")
+        failed     = sum(1 for f in all_files if f.get("status") == "Failed")
+        waiting    = sum(1 for f in all_files if f.get("status") == "Waiting")
+        unapproved = sum(1 for f in all_files if f.get("status") == "Unapproved")
+        skipped    = sum(s.get("skipped_files", 0) for s in summaries)
+
+        static_logger.info("─── Execution Summary ───────────────────────────────")
+        static_logger.info(f"  Source     : {source}")
+        static_logger.info(f"  Total      : {len(all_files)}")
+        static_logger.info(f"  Completed  : {completed}")
+        static_logger.info(f"  Failed     : {failed}")
+        static_logger.info(f"  Waiting    : {waiting}")
+        static_logger.info(f"  Unapproved : {unapproved}")
+        static_logger.info(f"  Skipped    : {skipped}")
+        static_logger.info("─────────────────────────────────────────────────────")
+        for f in all_files:
+            status = f.get("status", "unknown")
+            name   = f.get("file_name", "unknown")
+            err    = f.get("error_message", "")
+            line   = f"  [{status}] {name}"
+            if err:
+                line += f" — {err}"
+            static_logger.info(line)
+
+        return summaries
 
 
 # ===========================================================================
@@ -793,24 +764,12 @@ class DynamicTemplateLLMParser:
 # ===========================================================================
 if __name__ == "__main__":
     import argparse
-    import concurrent.futures
-
+    
     ap = argparse.ArgumentParser(description="DynamicTemplateLLMParser")
     ap.add_argument("--config", required=True, help="Config JSON file path or parser id")
     ap.add_argument("--source", required=True, help="File or directory path for parsing")
     args = ap.parse_args()
 
     static_logger.info("DynamicTemplateLLMParser execution started")
-    source  = args.source
-    is_dir  = os.path.isdir(source)
-    if is_dir:
-        files = DynamicTemplateLLMParser._get_files_by_filter(source)
-        if not files:
-            static_logger.info(f"No files found in directory: {source}")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() + 2) as executor:
-            for f in files:
-                executor.submit(DynamicTemplateLLMParser(args.config, f).run)
-    else:
-        DynamicTemplateLLMParser(args.config, source).run()
-
+    DynamicTemplateLLMParser._start_processing(args.config, args.source)
     static_logger.info("DynamicTemplateLLMParser execution end")

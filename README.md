@@ -184,7 +184,7 @@ Then open `.env` and fill in all the [required variables](#required-configuratio
 echo '{"capability": "llm_parser", "args": {"config": "123", "source": "docs/inv.pdf"}}' | python main.py
 
 # Windows
-echo {"capability": "llm_parser", "args": {"config": "123", "source": "docs\inv.pdf"}} | python main.py
+echo {"capability": "llm_parser", "args": {"config": "721", "source": "docs/inv.pdf"}} | python main.py
 ```
 
 **Via CLI directly:**

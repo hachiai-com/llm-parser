@@ -89,7 +89,6 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     if capability == "dynamic_template_llm_parser":
         config = args.get("config")
         source = args.get("source")
-        # env_file = args.get("env_file")
 
         if not config or not source:
             return {
@@ -97,91 +96,73 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "capability": capability,
             }
 
-        # try:
-        #     load_env(env_file)  # load client-specific env before anything else
-        # except FileNotFoundError as e:
-        #     return {
-        #         "error": str(e),
-        #         "capability": capability,
-        #     }
-
         try:
-            parser = DynamicTemplateLLMParser(config, source)
-            summary = parser.run()   # now returns _result_summary dict
+            summaries = DynamicTemplateLLMParser._start_processing(config, source)
 
-            # ── Derive top-level status and message (REPORTING ONLY) ──────────────
-            files = summary.get("files", [])
-            fatal_error = summary.get("error")   # set only on validation/fatal failures
+            # ── Aggregate all per-instance summaries ──────────────────────────
+            all_files = [fe for s in summaries for fe in s.get("files", [])]
+            fatal_errors = [s.get("error") for s in summaries if s.get("error")]
 
-            if fatal_error:
+            if not summaries or (fatal_errors and not all_files):
                 return {
-                    "error": f"Execution failed before processing: {fatal_error}",
+                    "error": fatal_errors[0] if fatal_errors else "No supported files found to process.",
                     "capability": capability,
                 }
-            elif not files:
-                return {
-                    "error": "No supported files found to process.",
-                    "capability": capability,
-                }
-            elif all(f.get("status") != "Completed" for f in files):
+
+            if all(f.get("status") != "Completed" for f in all_files):
                 first_error = next(
-                    (f.get("error_message") for f in files if f.get("error_message")),
-                    "All files failed — see 'files' for per-file details."
+                    (f.get("error_message") for f in all_files if f.get("error_message")),
+                    "All files failed — see 'files' for per-file details.",
                 )
                 return {
                     "error": first_error,
                     "capability": capability,
                 }
-            elif all(f.get("status") == "Completed" for f in files):
+
+            completed = sum(1 for f in all_files if f.get("status") == "Completed")
+            if completed == len(all_files):
                 top_status  = "success"
-                top_message = (
-                    f"All {len(files)} file(s) processed successfully."
-                )
-            elif any(f.get("status") == "Completed" for f in files):
-                completed = sum(1 for f in files if f.get("status") == "Completed")
+                top_message = f"All {len(all_files)} file(s) processed successfully."
+            else:
                 top_status  = "partial_success"
                 top_message = (
-                    f"{completed} of {len(files)} file(s) completed; "
+                    f"{completed} of {len(all_files)} file(s) completed; "
                     f"see 'files' for per-file details."
                 )
 
-            # ── Collect every distinct error from failed files ───────────────────
-            # Gives the caller a flat list without having to walk the files array
             file_errors = [
                 {"file": f["file_name"], "error": f["error_message"]}
-                for f in files
+                for f in all_files
                 if f.get("status") != "Completed" and f.get("error_message")
             ]
+
+            # For top-level identifiers use the first summary (single-file calls
+            # have exactly one; directory calls produce one per file)
+            first = summaries[0]
 
             return {
                 "result": {
                     "status":  top_status,
                     "message": top_message,
                     # ── execution identifiers ──────────────────────────────────
-                    "parser_file_execution_id": summary["parser_file_execution_id"],
-                    "config_id":               summary["config_id"],
-                    "source":                  summary["source"],
+                    "parser_file_execution_id": first["parser_file_execution_id"],
+                    "config_id":               first["config_id"],
+                    "source":                  first["source"],
                     # ── timing ────────────────────────────────────────────────
-                    "started_at":  summary["started_at"],
-                    "finished_at": summary["finished_at"],
-                    "duration_ms": summary["duration_ms"],
+                    "started_at":  first["started_at"],
+                    "finished_at": summaries[-1]["finished_at"],
+                    "duration_ms": sum(s.get("duration_ms") or 0 for s in summaries),
                     # ── file counters ──────────────────────────────────────────
-                    "total_files":      summary["total_files"],
-                    "skipped_files":    summary["skipped_files"],
-                    "completed_files":  summary["completed_files"],
-                    "failed_files":     summary["failed_files"],
-                    "waiting_files":    summary["waiting_files"],
-                    "unapproved_files": summary["unapproved_files"],
+                    "total_files":      sum(s.get("total_files", 0)   for s in summaries),
+                    "skipped_files":    sum(s.get("skipped_files", 0) for s in summaries),
+                    "completed_files":  completed,
+                    "failed_files":     sum(1 for f in all_files if f.get("status") == "Failed"),
+                    "waiting_files":    sum(1 for f in all_files if f.get("status") == "Waiting"),
+                    "unapproved_files": sum(1 for f in all_files if f.get("status") == "Unapproved"),
                     # ── errors (flat list — null when everything succeeded) ─────
-                    # Non-null only when at least one file did not complete.
-                    # Each entry: { "file": "<filename>", "error": "<reason>" }
                     "errors": file_errors or None,
                     # ── per-file detail ────────────────────────────────────────
-                    # Each entry: file_name, file_path, status, vendor_text,
-                    #             matched_vendor, matched_parser_id,
-                    #             conversation_trace_id, qna_trace_id,
-                    #             error_message, duration_ms
-                    "files": summary["files"],
+                    "files": all_files,
                 },
                 "capability": capability,
             }
@@ -196,7 +177,6 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     elif capability == "llm_parser":
         config = args.get("config")
         source = args.get("source")
-        # env_file = args.get("env_file")
 
         if not config or not source:
             return {
@@ -204,67 +184,108 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "capability": capability,
             }
 
-        # try:
-        #     load_env(env_file)  # load client-specific env before anything else
-        # except FileNotFoundError as e:
-        #     return {
-        #         "error": str(e),
-        #         "capability": capability,
-        #     }
-    
         try:
-            parser  = LLMParser(config, source)
-            summary = parser.process_file(config, source)   # returns _result_summary dict
-    
-            result_code = summary.get("result_code", 1)
-            status      = summary.get("status", "unknown")
-    
-            # On failure: surface the actual error, never a generic "executed" line
-            if status == "success" or status == "waiting":
-                message = summary.get("message")
-            else:
-                message = (
-                    summary.get("error")
-                    or summary.get("message")
-                    or f"Parser failed with exit code {result_code}."
-                )
+            summaries = LLMParser._start_processing(config, source)
+
+            if not summaries:
                 return {
-                    "error": message,
+                    "error": "No supported files found to process.",
                     "capability": capability,
                 }
-    
+
+            # ── Single file — existing behaviour unchanged ─────────────────────
+            if len(summaries) == 1:
+                summary     = summaries[0]
+                result_code = summary.get("result_code", 1)
+                status      = summary.get("status", "unknown")
+
+                if status not in ("success", "waiting"):
+                    return {
+                        "error": (
+                            summary.get("error")
+                            or summary.get("message")
+                            or f"Parser failed with exit code {result_code}."
+                        ),
+                        "capability": capability,
+                    }
+
+                return {
+                    "result": {
+                        "status":              status,
+                        "result_code":         result_code,
+                        "message":             summary.get("message"),
+                        "parser_execution_id": summary.get("parser_execution_id"),
+                        "parser_name":         summary.get("parser_name"),
+                        "config_id":           summary.get("config_id"),
+                        "source":              summary.get("source"),
+                        "qna_trace_id":        summary.get("qna_trace_id"),
+                        "total_pages":         summary.get("total_pages"),
+                        "pages_processed":     summary.get("pages_processed"),
+                        "records_processed":   summary.get("records_processed"),
+                        "started_at":          summary.get("started_at"),
+                        "finished_at":         summary.get("finished_at"),
+                        "duration_ms":         summary.get("duration_ms"),
+                        "error":               summary.get("error") if status != "success" else None,
+                    },
+                    "capability": capability,
+                }
+
+            # ── Directory / multiple files — aggregate summaries ───────────────
+            completed = sum(1 for s in summaries if s.get("status") == "success")
+            failed    = sum(1 for s in summaries if s.get("status") == "failed")
+            waiting   = sum(1 for s in summaries if s.get("status") == "waiting")
+
+            if completed == 0:
+                first_error = next(
+                    (s.get("error") or s.get("message") for s in summaries if s.get("status") == "failed"),
+                    "All files failed.",
+                )
+                return {
+                    "error": first_error,
+                    "capability": capability,
+                }
+
+            top_status  = "success" if completed == len(summaries) else "partial_success"
+            top_message = (
+                f"All {len(summaries)} file(s) processed successfully."
+                if top_status == "success"
+                else f"{completed} of {len(summaries)} file(s) completed; see 'files' for per-file details."
+            )
+
+            file_errors = [
+                {"file": os.path.basename(s.get("source", "")), "error": s.get("error") or s.get("message")}
+                for s in summaries
+                if s.get("status") not in ("success", "waiting") and (s.get("error") or s.get("message"))
+            ]
+
+            first = summaries[0]
+
             return {
                 "result": {
-                    "status":      status,
-                    "result_code": result_code,
-                    "message":     message,
-                    # ── execution identifiers ──────────────────────────────────
-                    "parser_execution_id": summary.get("parser_execution_id"),
-                    "parser_name":         summary.get("parser_name"),
-                    "config_id":           summary.get("config_id"),
-                    "source":              summary.get("source"),
-                    # ── API trace ids ──────────────────────────────────────────
-                    "qna_trace_id":  summary.get("qna_trace_id"),
-                    # ── document stats ─────────────────────────────────────────
-                    "total_pages":      summary.get("total_pages"),
-                    "pages_processed":  summary.get("pages_processed"),
-                    # ── DB insert result ───────────────────────────────────────
-                    "records_processed": summary.get("records_processed"),
-                    # ── timing ────────────────────────────────────────────────
-                    "started_at":  summary.get("started_at"),
-                    "finished_at": summary.get("finished_at"),
-                    "duration_ms": summary.get("duration_ms"),
-                    # ── error detail (null on success) ─────────────────────────
-                    "error": summary.get("error") if status != "success" else None,
+                    "status":              top_status,
+                    "message":             top_message,
+                    "config_id":           first.get("config_id"),
+                    "source":              source,
+                    "started_at":          first.get("started_at"),
+                    "finished_at":         summaries[-1].get("finished_at"),
+                    "duration_ms":         sum(s.get("duration_ms") or 0 for s in summaries),
+                    "total_files":         len(summaries),
+                    "completed_files":     completed,
+                    "failed_files":        failed,
+                    "waiting_files":       waiting,
+                    "records_processed":   sum(s.get("records_processed") or 0 for s in summaries),
+                    "errors":              file_errors or None,
+                    "files":               summaries,
                 },
                 "capability": capability,
             }
-    
+
         except Exception as e:
             return {
                 "error": str(e),
                 "capability": capability,
             }
+
     elif capability == "checking_timeout":
         # duration_minutes is optional — empty/missing defaults to 2 mins
         duration = args.get("duration_minutes", None)
