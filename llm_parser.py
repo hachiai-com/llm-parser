@@ -718,7 +718,7 @@ class LLMParser:
         """Mirrors LLMParser.createFileMap() — attaches example files if configured."""
         if not self.parser_id:
             return {}
-        base_path = cfg("HACHIAI_LLM_EXAMPLE_FILES_BASE_PATH", "")
+        base_path = cfg("LLM_PARSER_HACHIAI_LLM_EXAMPLE_FILES_BASE_PATH", "")
         if not base_path:
             return {}
         example_dir = os.path.join(base_path, self.parser_id)

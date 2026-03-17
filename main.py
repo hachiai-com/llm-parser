@@ -10,7 +10,6 @@ import os
 
 from dynamic_template_llm_parser import DynamicTemplateLLMParser
 from llm_parser import LLMParser
-from config import load_env
 
 def checking_timeout(duration_minutes: float = None) -> Dict[str, Any]:
     """

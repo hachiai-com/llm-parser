@@ -780,11 +780,11 @@ class DynamicTemplateLLMParser:
     @staticmethod
     def _get_parser_execution_id() -> str:
         """Mirrors DynamicTemplateLLMParser.getParserExecutionId()"""
-        pid = os.environ.get("PARSER_EXECUTION_ID")
+        pid = os.environ.get("LLM_PARSER_PARSER_EXECUTION_ID")
         if not pid:
             import random
             pid = str(1000 + random.randint(0, 31768)) + str(int(time.time() * 1000) % 100000)
-            os.environ["PARSER_EXECUTION_ID"] = pid
+            os.environ["LLM_PARSER_PARSER_EXECUTION_ID"] = pid
         return pid
 
 

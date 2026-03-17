@@ -12,8 +12,8 @@ Now reads from a .env file using python-dotenv.
 Usage:
     from config import cfg
 
-    db_url   = cfg("DATABASE_URL")
-    timeout  = cfg("HACHIAI_LLM_HTTP_TIMEOUT", "180")
+    db_name   = cfg("LLM_PARSER_DATABASE_USERNAME")
+
 
 Install dependency:
     pip install python-dotenv
@@ -29,15 +29,15 @@ from dotenv import load_dotenv, find_dotenv
 # ---------------------------------------------------------------------------
 # find_dotenv() walks up from CWD until it finds a .env file —
 # mirrors Java's classpath / root-path fallback in readAppProperties()
-# _env_path = find_dotenv(usecwd=True)
-# if _env_path:
-#     load_dotenv(_env_path, override=False)
-# else:
-#     # Fallback: try script directory
-#     _script_dir = os.path.dirname(os.path.abspath(__file__))
-#     _fallback   = os.path.join(_script_dir, ".env")
-#     if os.path.isfile(_fallback):
-#         load_dotenv(_fallback, override=False)
+_env_path = find_dotenv(usecwd=True)
+if _env_path:
+    load_dotenv(_env_path, override=False)
+else:
+    # Fallback: try script directory
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _fallback   = os.path.join(_script_dir, ".env")
+    if os.path.isfile(_fallback):
+        load_dotenv(_fallback, override=False)
 
 
 def cfg(key: str, default: Optional[str] = None) -> Optional[str]:
@@ -47,7 +47,7 @@ def cfg(key: str, default: Optional[str] = None) -> Optional[str]:
     Mirrors: prop.getProperty(key, defaultValue)
 
     Args:
-        key     : Environment variable name (e.g. "DATABASE_URL").
+        key     : Environment variable name (e.g. "LLM_PARSER_DATABASE_URL").
         default : Returned when the key is not set.
 
     Returns:
@@ -89,44 +89,44 @@ def cfg_float(key: str, default: float = 0.0) -> float:
 
 class DBConfig:
     """Mirrors the database.* properties used in SqlDao constructor calls."""
-    type = lambda: cfg("DATABASE_TYPE", "mysql")
-    host = lambda: cfg("DATABASE_HOST", "localhost")
-    port = lambda: cfg_int("DATABASE_PORT", 3306)
-    username = lambda: cfg("DATABASE_USERNAME", "")
-    password = lambda: cfg("DATABASE_PASSWORD", "")
-    database_name = lambda: cfg("DATABASE_NAME", "")
+    type = lambda: cfg("LLM_PARSER_DATABASE_TYPE", "mysql")
+    host = lambda: cfg("LLM_PARSER_DATABASE_HOST", "localhost")
+    port = lambda: cfg_int("LLM_PARSER_DATABASE_PORT", 3306)
+    username = lambda: cfg("LLM_PARSER_DATABASE_USERNAME", "")
+    password = lambda: cfg("LLM_PARSER_DATABASE_PASSWORD", "")
+    database_name = lambda: cfg("LLM_PARSER_DATABASE_NAME", "")
 
 
 class LLMConfig:
     """Mirrors hachiai.llm.* properties used across LLMParser and DynamicTemplateLLMParser."""
 
     # Auth
-    token               = lambda: cfg("HACHIAI_LLM_TOKEN", "")
+    token               = lambda: cfg("LLM_PARSER_HACHIAI_LLM_TOKEN", "")
 
     # Model settings
-    llm_type            = lambda: cfg("HACHIAI_LLM_TYPE", "llm")
-    max_token           = lambda: cfg("HACHIAI_LLM_MAX_TOKEN", "8096")
-    temperature         = lambda: cfg("HACHIAI_LLM_TEMPERATURE", "0.00")
-    http_timeout        = lambda: cfg_int("HACHIAI_LLM_HTTP_TIMEOUT", 180)
-    enable_validation   = lambda: cfg("HACHIAI_LLM_ENABLE_VALIDATION", "false")
-    enable_confidence   = lambda: cfg("HACHIAI_LLM_ENABLE_CONFIDENCE_SCORE", "false")
+    llm_type            = lambda: cfg("LLM_PARSER_HACHIAI_LLM_TYPE", "llm")
+    max_token           = lambda: cfg("LLM_PARSER_HACHIAI_LLM_MAX_TOKEN", "8096")
+    temperature         = lambda: cfg("LLM_PARSER_HACHIAI_LLM_TEMPERATURE", "0.00")
+    http_timeout        = lambda: cfg_int("LLM_PARSER_HACHIAI_LLM_HTTP_TIMEOUT", 180)
+    enable_validation   = lambda: cfg("LLM_PARSER_HACHIAI_LLM_ENABLE_VALIDATION", "false")
+    enable_confidence   = lambda: cfg("LLM_PARSER_HACHIAI_LLM_ENABLE_CONFIDENCE_SCORE", "false")
 
     # Endpoints
-    api_url             = lambda: cfg("HACHIAI_LLM_API", "")
-    status_api_url      = lambda: cfg("HACHIAI_LLM_STATUS_API_URL", "")
-    conversation_api    = lambda: cfg("HACHIAI_LLM_CONVERSATION_API", "")
+    api_url             = lambda: cfg("LLM_PARSER_HACHIAI_LLM_API", "")
+    status_api_url      = lambda: cfg("LLM_PARSER_HACHIAI_LLM_STATUS_API_URL", "")
+    conversation_api    = lambda: cfg("LLM_PARSER_HACHIAI_LLM_CONVERSATION_API", "")
 
     # QnA status polling
-    status_total_iterations   = lambda: cfg_int("HACHIAI_LLM_STATUS_API_TOTAL_ITERATIONS", 3)
-    status_interval_minutes   = lambda: cfg_int("HACHIAI_LLM_STATUS_API_INTERVAL_MINUTES", 3)
+    status_total_iterations   = lambda: cfg_int("LLM_PARSER_HACHIAI_LLM_STATUS_API_TOTAL_ITERATIONS", 3)
+    status_interval_minutes   = lambda: cfg_int("LLM_PARSER_HACHIAI_LLM_STATUS_API_INTERVAL_MINUTES", 3)
 
     # Conversation API polling
-    conv_total_iterations     = lambda: cfg_int("HACHIAI_LLM_CONVERSATION_API_TOTAL_ITERATIONS", 1)
-    conv_interval_seconds     = lambda: cfg_int("HACHIAI_LLM_CONVERSATION_API_INTERVAL_SECONDS", 10)
+    conv_total_iterations     = lambda: cfg_int("LLM_PARSER_HACHIAI_LLM_CONVERSATION_API_TOTAL_ITERATIONS", 1)
+    conv_interval_seconds     = lambda: cfg_int("LLM_PARSER_HACHIAI_LLM_CONVERSATION_API_INTERVAL_SECONDS", 10)
 
     # Dynamic parser query prompt
     dynamic_parser_query      = lambda: cfg(
-        "HACHIAI_LLM_DYNAMIC_PARSER_QUERY",
+        "LLM_PARSER_HACHIAI_LLM_DYNAMIC_PARSER_QUERY",
         "Give me title of this document along with the company/vendor name?"
     )
 
