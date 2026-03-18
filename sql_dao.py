@@ -96,6 +96,98 @@ class SqlDao:
             self._logger.error(msg)
             raise ValueError(msg)
 
+    @staticmethod
+    def parse_jdbc_url(jdbc_url: str) -> Dict[str, Any]:
+        """
+        Parses a Java JDBC URL string and returns a dict of keyword arguments
+        that can be passed directly to SqlDao.__init__ (except user_name /
+        password, which callers must supply separately).
+ 
+        Supported formats
+        -----------------
+        MySQL (plain):
+            jdbc:mysql://host:3306/dbname
+            jdbc:mysql://host/dbname
+            jdbc:mysql://host:3306/dbname?useSSL=false&serverTimezone=UTC
+ 
+        MySQL (replication / load-balanced):
+            jdbc:mysql:replication://primary:3306,replica:3306/dbname
+            jdbc:mysql:loadbalance://host1:3306,host2:3306/dbname
+ 
+        Microsoft SQL Server:
+            jdbc:sqlserver://host:1433;databaseName=dbname
+            jdbc:sqlserver://host;databaseName=dbname;integratedSecurity=true
+ 
+        Args:
+            jdbc_url: Full JDBC connection string from LLMConfigBean.sqlUrl.
+ 
+        Returns:
+            Dict with keys:
+                db_type  : "mysql" | "mssql"
+                host     : first host in the URL
+                port     : integer port (3306 default for MySQL, 1433 for MSSQL)
+                database : database / schema name
+ 
+        Raises:
+            ValueError: if the URL format is not recognised.
+ 
+        Examples:
+            >>> SqlDao.parse_jdbc_url("jdbc:mysql://db.example.com:3306/invoices")
+            {'db_type': 'mysql', 'host': 'db.example.com', 'port': 3306, 'database': 'invoices'}
+ 
+            >>> SqlDao.parse_jdbc_url("jdbc:sqlserver://db.example.com:1433;databaseName=invoices")
+            {'db_type': 'mssql', 'host': 'db.example.com', 'port': 1433, 'database': 'invoices'}
+        """
+        import re
+        if not jdbc_url:
+            raise ValueError("jdbc_url must not be empty.")
+ 
+        url = jdbc_url.strip()
+ 
+        # ── MySQL ──────────────────────────────────────────────────────────────
+        # Covers plain, replication, loadbalance sub-protocols.
+        # Pattern: jdbc:mysql[:<subprotocol>]://host[:port][,host[:port]...]/db[?params]
+        mysql_pattern = re.compile(
+            r"^jdbc:mysql(?::[^/]+)?://"   # jdbc:mysql[:<sub>]://
+            r"([^/:,?]+)"                  # first host  (group 1)
+            r"(?::(\d+))?"                 # optional :port  (group 2)
+            r"(?:,[^/]*)?"                 # optional extra hosts (ignored)
+            r"/([^?;]+)",                  # /database  (group 3)
+            re.IGNORECASE,
+        )
+        m = mysql_pattern.match(url)
+        if m:
+            host     = m.group(1)
+            port     = int(m.group(2)) if m.group(2) else 3306
+            database = m.group(3).strip("/")
+            return {"db_type": MYSQL_DB, "host": host, "port": port, "database": database}
+ 
+        # ── Microsoft SQL Server ───────────────────────────────────────────────
+        # Pattern: jdbc:sqlserver://host[:port][;key=value;...]
+        mssql_pattern = re.compile(
+            r"^jdbc:sqlserver://"          # jdbc:sqlserver://
+            r"([^:;]+)"                    # host  (group 1)
+            r"(?::(\d+))?",               # optional :port  (group 2)
+            re.IGNORECASE,
+        )
+        m = mssql_pattern.match(url)
+        if m:
+            host = m.group(1)
+            port = int(m.group(2)) if m.group(2) else 1433
+ 
+            # Extract databaseName from the semicolon-separated properties
+            db_match = re.search(r"databaseName=([^;]+)", url, re.IGNORECASE)
+            if not db_match:
+                raise ValueError(
+                    f"Could not extract databaseName from SQL Server JDBC URL: '{jdbc_url}'"
+                )
+            database = db_match.group(1).strip()
+            return {"db_type": MSSQL_DB, "host": host, "port": port, "database": database}
+ 
+        raise ValueError(
+            f"Unrecognised JDBC URL format: '{jdbc_url}'. "
+            "Expected jdbc:mysql://host[:port]/db or jdbc:sqlserver://host[:port];databaseName=db"
+        )
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------

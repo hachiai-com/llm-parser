@@ -199,13 +199,24 @@ class DynamicTemplateLLMParser:
                 tmp_dao.close()
 
     def _load_db(self) -> None:
+        """
+        Mirrors Java loadDB() exactly:
+            dao = new SqlDao(config.getSql(), config.getSqlUrl(),
+                             config.getUserName(), config.getPassword())
+ 
+        SqlDao.parse_jdbc_url() converts the JDBC URL stored in config.sqlUrl
+        into the host / port / database / db_type kwargs that the Python
+        SqlDao constructor needs.
+        """
+        if not self.config:
+            raise RuntimeError("Config not initialised — cannot open DB connection.")
+ 
+        jdbc_kwargs = SqlDao.parse_jdbc_url(self.config.sqlUrl)
+        # jdbc_kwargs contains: db_type, host, port, database
         self.dao = SqlDao(
-            db_type   = DBConfig.type(),
-            host      = DBConfig.host(),
-            port      = DBConfig.port(),
-            database  = DBConfig.database_name(),
-            user_name = DBConfig.username(),
-            password  = DBConfig.password(),
+            **jdbc_kwargs,
+            user_name = self.config.userName,
+            password  = self.config.password,
             logger    = self.logger,
         )
 

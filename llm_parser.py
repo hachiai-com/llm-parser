@@ -220,6 +220,7 @@ class LLMParser:
             with open(config_input, "r", encoding="utf-8") as f:
                 d = json.load(f)
             self.config    = LLMConfigBean.from_dict(d)
+            self.logger.info(f"Config loaded: {self.config}")
             self.parser_id = self.config.id
         elif config_input.strip().isdigit():
             self.logger.info(f"Using DB config for parser id: {config_input}")
@@ -228,6 +229,7 @@ class LLMParser:
                 raise RuntimeError(f"No active config found for parser id: {config_input}")
             config_data       = json.loads(rows[0]["config"])
             self.config       = LLMConfigBean(**config_data)
+            self.logger.info(f"Config loaded: {self.config}")
             self.parser_id    = config_input
             self.parser_name  = rows[0].get("name", "")
             self.service_type = rows[0].get("service_type") or "vision_quest;minicmp2_6"
@@ -264,15 +266,18 @@ class LLMParser:
 
     def _load_db(self) -> None:
         """Mirrors LLMParser.loadDB()"""
+        if not self.config:
+            raise RuntimeError("Config not initialised — cannot open DB connection.")
+ 
+        jdbc_kwargs = SqlDao.parse_jdbc_url(self.config.sqlUrl)
+        # jdbc_kwargs contains: db_type, host, port, database
         self.dao = SqlDao(
-            db_type   = DBConfig.type(),
-            host      = DBConfig.host(),
-            port      = DBConfig.port(),
-            database  = DBConfig.database_name(),
-            user_name = DBConfig.username(),
-            password  = DBConfig.password(),
+            **jdbc_kwargs,
+            user_name = self.config.userName,
+            password  = self.config.password,
             logger    = self.logger,
         )
+
 
     def _load_column_config(self) -> None:
         """
