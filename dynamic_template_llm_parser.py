@@ -459,6 +459,11 @@ class DynamicTemplateLLMParser:
         """
         if not os.path.exists(file_path):
             self.logger.info(f"File not found: '{file_path}'")
+            _file_entry = self._make_file_entry(file_path)
+            _file_entry["status"] = str(FileExecutionStatus.Failed)
+            _file_entry["error_message"] = f"File not found: '{file_path}'"
+            _file_entry["duration_ms"] = 0
+            self._result_summary["files"].append(_file_entry)
             return
 
         # REPORTING ONLY — create per-file tracking entry

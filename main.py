@@ -109,20 +109,40 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "capability": capability,
                 }
 
-            if all(f.get("status") != "Completed" for f in all_files):
-                first_error = next(
-                    (f.get("error_message") for f in all_files if f.get("error_message")),
-                    "All files failed — see 'files' for per-file details.",
-                )
+            non_result_statuses = {"Failed", "Waiting"}
+            if all_files and all(f.get("status") in non_result_statuses for f in all_files):
+                # Surface the actual per-file error messages
+                file_errors = [
+                    {"file": f["file_name"], "error": f["error_message"]}
+                    for f in all_files
+                    if f.get("error_message")
+                ]
+                first_error = file_errors[0]["error"] if file_errors else "All files failed — see 'files' for per-file details."
                 return {
                     "error": first_error,
                     "capability": capability,
+                    "files": all_files,  # always include per-file detail
                 }
 
-            completed = sum(1 for f in all_files if f.get("status") == "Completed")
+            completed   = sum(1 for f in all_files if f.get("status") == "Completed")
+            unapproved  = sum(1 for f in all_files if f.get("status") == "Unapproved")
+            resolved    = completed + unapproved   # both are valid terminal states
+
             if completed == len(all_files):
                 top_status  = "success"
                 top_message = f"All {len(all_files)} file(s) processed successfully."
+            elif resolved == len(all_files) and unapproved > 0:
+                top_status  = "unapproved"
+                top_message = (
+                    f"{unapproved} file(s) could not be matched to a vendor template. "
+                    f"No data was extracted."
+                )
+            elif resolved > 0:
+                top_status  = "partial_success"
+                top_message = (
+                    f"{completed} completed, {unapproved} unapproved, "
+                    f"out of {len(all_files)} file(s); see 'files' for details."
+                )
             else:
                 top_status  = "partial_success"
                 top_message = (
