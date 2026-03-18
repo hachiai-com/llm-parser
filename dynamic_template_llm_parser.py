@@ -95,6 +95,8 @@ class DynamicTemplateLLMParser:
             "qna_trace_id":           None,   # filled after invoke_llm_parser
             "error_message":          None,   # filled on failure
             "duration_ms":            None,   # filled at end of _process_single_file
+            "records_processed":      None,
+            "inserted_records":       None,
         }
 
     def _finalize_result_summary(self) -> None:
@@ -526,7 +528,7 @@ class DynamicTemplateLLMParser:
             return
 
         # ── Step 3: Invoke matched parser (_invoke_llm_parser) ───────────────
-        result = self._invoke_llm_parser(
+        invoke_result = self._invoke_llm_parser(
             parser_id=match_result["parser_id"],
             config_class=match_result["config_class"],
             file_path=file_path,
@@ -534,21 +536,20 @@ class DynamicTemplateLLMParser:
 
         # REPORTING ONLY — capture qna trace id set by the invoked parser
         _file_entry["qna_trace_id"] = self.execution_data.qnaTraceTraceId
+        _file_entry["records_processed"] = invoke_result.get("records_processed")
+        _file_entry["inserted_records"]  = invoke_result.get("inserted_records")
 
+        result_code  = invoke_result.get("result_code", 1)
         status_map = {0: FileExecutionStatus.Completed, 2: FileExecutionStatus.Waiting}
-        final_status = status_map.get(result, FileExecutionStatus.Failed)
+        final_status = status_map.get(result_code, FileExecutionStatus.Failed)
         self.update_execution_status(file_path, final_status)
 
         # REPORTING ONLY — finalise file entry
         _file_entry["status"] = str(final_status)
-        # Always surface an error_message on non-Completed outcomes so callers
-        # never see status=Failed with error_message=null. Pulled from
-        # execution_data (set by the invoked parser on exception), falling back
-        # to a generic exit-code description if errorMessage was not populated.
         if final_status != FileExecutionStatus.Completed:
             _file_entry["error_message"] = (
                 self.execution_data.errorMessage
-                or f"Parser returned exit code {result} (expected 0 for success)"
+                or f"Parser returned exit code {invoke_result} (expected 0 for success)"
             )
         _file_entry["duration_ms"] = round(time.time() * 1000 - _file_start_ms)
         self._result_summary["files"].append(_file_entry)
@@ -567,7 +568,7 @@ class DynamicTemplateLLMParser:
             error_msg = f"No Python mapping found for Java class: '{config_class}'"
             self.logger.error(error_msg)
             self.execution_data.errorMessage = error_msg
-            return 1
+            return {"result_code": 1, "records_processed": None, "inserted_records": None}
 
         try:
             import importlib
@@ -590,14 +591,19 @@ class DynamicTemplateLLMParser:
                 self.execution_data.errorMessage = self.execution_data.errorMessage or instance.error_message
 
             if isinstance(result, dict):
-                return result.get("result_code", 1)
-
-            return result
+                return {
+                    "result_code":      result.get("result_code", 1),
+                    "records_processed": result.get("records_processed"),
+                    "inserted_records":  result.get("inserted_records")
+                }
+            
+            self.logger.warning(f"Parser returned bare int {result} instead of summary dict — no record data available.")
+            return {"result_code": int(result), "records_processed": None, "inserted_records": None}
 
         except Exception as ex:
             self.logger.error(f"Error invoking '{python_class_path}': {ex}", exc_info=True)
             self.execution_data.errorMessage = str(ex)
-            return 1
+            return {"result_code": 1, "records_processed": None, "inserted_records": None}
 
     # ── HTTP helpers ─────────────────────────────────────────────────────────
     def _post_with_file(self, url: str, token: str, file_path: str,

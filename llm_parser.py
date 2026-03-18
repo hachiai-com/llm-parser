@@ -155,6 +155,13 @@ class LLMParser:
                 self.error_message
                 or f"Parser failed (exit code {result_code})."
             )
+        if records:
+            col_names = [b.sql_column_name for b in self.column_format_list]
+            self._result_summary["inserted_records"] = [
+                dict(zip(col_names, row)) for row in records
+            ]
+        else:
+            self._result_summary["inserted_records"] = []
 
     # ── Setters called by DynamicTemplateLLMParser ───────────────────────────
     def set_logger(self, logger) -> None:

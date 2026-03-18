@@ -159,6 +159,7 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "failed_files":     sum(1 for f in all_files if f.get("status") == "Failed"),
                     "waiting_files":    sum(1 for f in all_files if f.get("status") == "Waiting"),
                     "unapproved_files": sum(1 for f in all_files if f.get("status") == "Unapproved"),
+                    "records_processed": sum(f.get("records_processed") or 0 for f in all_files),
                     # ── errors (flat list — null when everything succeeded) ─────
                     "errors": file_errors or None,
                     # ── per-file detail ────────────────────────────────────────
@@ -222,6 +223,7 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                         "total_pages":         summary.get("total_pages"),
                         "pages_processed":     summary.get("pages_processed"),
                         "records_processed":   summary.get("records_processed"),
+                        "inserted_records":    summary.get("inserted_records"),
                         "started_at":          summary.get("started_at"),
                         "finished_at":         summary.get("finished_at"),
                         "duration_ms":         summary.get("duration_ms"),
@@ -274,6 +276,11 @@ def handle_request(payload: Dict[str, Any]) -> Dict[str, Any]:
                     "failed_files":        failed,
                     "waiting_files":       waiting,
                     "records_processed":   sum(s.get("records_processed") or 0 for s in summaries),
+                    "inserted_records":  [                                              # ADD
+                        record
+                        for s in summaries
+                        for record in (s.get("inserted_records") or [])
+                    ],
                     "errors":              file_errors or None,
                     "files":               summaries,
                 },
