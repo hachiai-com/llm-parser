@@ -81,6 +81,21 @@ def cfg_float(key: str, default: float = 0.0) -> float:
     except ValueError:
         return default
 
+def cfg_unescape(key: str, default: Optional[str] = None) -> Optional[str]:
+    """
+    Like cfg() but decodes Java-style escape sequences in the value.
+    
+    Java's Properties loader converts \\r\\n → actual CRLF automatically.
+    python-dotenv does NOT — it keeps them as literal backslash sequences.
+    This function bridges that gap for multi-line prompt strings.
+    """
+    value = os.environ.get(key, default)
+    if value and isinstance(value, str):
+        try:
+            value = value.encode('raw_unicode_escape').decode('unicode_escape')
+        except (UnicodeDecodeError, ValueError):
+            pass  # return original if decoding fails
+    return value
 
 # ---------------------------------------------------------------------------
 # Typed accessors grouped by concern
@@ -125,7 +140,7 @@ class LLMConfig:
     conv_interval_seconds     = lambda: cfg_int("LLM_PARSER_HACHIAI_LLM_CONVERSATION_API_INTERVAL_SECONDS", 10)
 
     # Dynamic parser query prompt
-    dynamic_parser_query      = lambda: cfg(
+    dynamic_parser_query      = lambda: cfg_unescape(
         "LLM_PARSER_HACHIAI_LLM_DYNAMIC_PARSER_QUERY",
         "Give me title of this document along with the company/vendor name?"
     )
